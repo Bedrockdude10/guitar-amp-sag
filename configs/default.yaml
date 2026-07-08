@@ -1,0 +1,48 @@
+# Default configuration for the power-sag gray-box amp model.
+# Values based on a Fender Deluxe Reverb AB763 with GZ34 tube rectifier.
+
+# --- Sampling ---
+fs: 48000                 # sample rate (Hz)
+
+# --- Power supply physics (η) ---
+V_oc: 420.0               # volts, open-circuit B+ (transformer)
+V_idle: 415.0             # volts, quiescent B+ at idle
+C1: 22.0e-6               # farads, first filter capacitor
+R_eff: 300.0              # ohms, effective source resistance (transformer + GZ34)
+delta_V: 40.0             # volts, expected sag range for FiLM normalisation
+
+# R_eff model: "scalar" (learnable constant) or "nonlinear" R0 + R1*softplus(I*k)
+reff_mode: scalar
+R0: 250.0                 # ohms, nonlinear model floor
+R1: 100.0                 # ohms, nonlinear model current-dependent scale
+k: 1.0                    # 1/A, softplus input scale
+
+# Which physical parameters are jointly learnable
+learn_R_eff: true
+learn_C1: true
+learn_V_oc: false
+
+# --- Coupling network (θ): I_load = MLP(x, V_B+) ---
+coupling_hidden: 16
+
+# --- Audio path network (φ): conditioned LSTM ---
+hidden_size: 32
+num_layers: 1
+
+# --- Training ---
+segment_len: 24000        # samples (0.5 s at 48 kHz)
+batch_size: 8
+lr: 5.0e-4
+epochs: 100
+preemph_weight: 1.0       # λ for the pre-emphasis loss term
+preemph_coeff: 0.85       # first-order pre-emphasis filter coefficient
+# Truncated BPTT: detach hidden state and step every N samples within a segment
+# to bound memory (null = full BPTT over the whole segment). Sag time constants
+# (~15 ms => ~720 samples at 48 kHz) fit comfortably inside a few thousand.
+tbptt_steps: 2048
+use_script: true          # TorchScript the coupling+physics recurrence (scalar R_eff)
+val_frac: 0.1             # chronological validation split (held out for best-checkpoint)
+test_frac: 0.1            # chronological test split (held out for evaluate.py)
+
+# --- Cabinet IR ---
+cabinet_ir: null          # path to a .wav impulse response, or null to bypass
