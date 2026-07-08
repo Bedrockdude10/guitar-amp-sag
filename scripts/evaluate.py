@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from power_sag.evaluation import SagEvaluator  # noqa: E402
 from power_sag.nn import PowerSagModel  # noqa: E402
+from power_sag.utils import resolve_device  # noqa: E402
 
 
 def rms_envelope(signal: torch.Tensor, win: int) -> torch.Tensor:
@@ -36,12 +37,13 @@ def rms_envelope(signal: torch.Tensor, win: int) -> torch.Tensor:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate sag behaviour.")
     parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     args = parser.parse_args()
 
-    ckpt = torch.load(args.checkpoint, map_location=args.device)
+    device = resolve_device(args.device)
+    ckpt = torch.load(args.checkpoint, map_location=device)
     cfg = ckpt["config"]
-    model = PowerSagModel.from_config(cfg)
+    model = PowerSagModel.from_config(cfg).to(device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 

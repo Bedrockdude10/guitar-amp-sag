@@ -44,6 +44,7 @@ from power_sag.data import (  # noqa: E402
 from power_sag.dsp import CabinetIR  # noqa: E402
 from power_sag.losses import ESRLoss, PreEmphasisLoss  # noqa: E402
 from power_sag.nn import PowerSagModel  # noqa: E402
+from power_sag.utils import configure_backends, resolve_device  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", default="power_sag_model.pt", help="Best checkpoint path.")
     parser.add_argument("--log", default=None, help="CSV metrics log path.")
     parser.add_argument("--resume", default=None, help="Checkpoint to resume from.")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     return parser.parse_args()
 
 
@@ -120,7 +121,9 @@ def evaluate(
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
-    device = torch.device(args.device)
+    device = resolve_device(args.device)
+    configure_backends(device)
+    print(f"device: {device}")
 
     import soundfile as sf
 

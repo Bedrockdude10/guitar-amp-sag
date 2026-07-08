@@ -92,6 +92,23 @@ boundaries. A few things this depends on — each locked down by tests:
   V_idle` (conditioning input `0`) the layer is exactly the identity — it does
   not zero out the audio path at the start of training.
 
+## Devices and performance
+
+- **CUDA / MPS / CPU.** `utils.resolve_device` auto-selects CUDA, then Apple
+  MPS, then CPU; all scripts take `--device auto|cuda|mps|cpu`. The model is
+  float32 throughout, so MPS (no float64) works unchanged. `configure_backends`
+  enables cuDNN autotuning on CUDA.
+- **Mixed precision is deliberately *not* used on the physics path.** The ODE
+  integrates over tens of thousands of Euler steps; float16 cannot resolve
+  ~0.01 V changes on a ~415 V rail, so AMP would corrupt the supply state.
+- **What is and isn't vectorised.** The audio LSTM runs vectorised over the
+  whole sequence. The coupling→ODE recurrence is *inherently sequential* (each
+  `V_B+[n]` feeds the coupling MLP for the next sample), so it cannot be
+  vectorised away — the TorchScript path (`enable_script`, ~4× on CPU) removes
+  the per-step dispatch overhead, and GPU utilisation scales with `batch_size`,
+  which the recurrence processes in parallel. Data-generation filters that *are*
+  linear (the synthetic envelope follower) run vectorised via `scipy.lfilter`.
+
 ## Install
 
 ```bash

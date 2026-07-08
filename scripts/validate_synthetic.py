@@ -31,6 +31,7 @@ from power_sag import load_config  # noqa: E402
 from power_sag.losses import ESRLoss, PreEmphasisLoss  # noqa: E402
 from power_sag.nn import PowerSagModel  # noqa: E402
 from power_sag.synthetic import SyntheticSagAmp  # noqa: E402
+from power_sag.utils import configure_backends, resolve_device  # noqa: E402
 
 
 def correlation(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -46,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--segment", type=int, default=4800, help="training segment length")
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="auto", help="auto | cuda | mps | cpu")
     p.add_argument(
         "--supervise-vb",
         type=float,
@@ -61,7 +62,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     torch.manual_seed(args.seed)
-    device = torch.device(args.device)
+    device = resolve_device(args.device)
+    configure_backends(device)
 
     # --- Ground truth: known physics + coupling + sag nonlinearity ---------
     true_R_eff, true_C1 = 300.0, 22e-6

@@ -36,6 +36,8 @@ __all__ = [
     "CabinetIR",
     "SagEvaluator",
     "SyntheticSagAmp",
+    "resolve_device",
+    "configure_backends",
 ]
 
 # Maps public name -> submodule providing it (kept lazy so ``import power_sag``
@@ -56,6 +58,8 @@ _EXPORTS = {
     "CabinetIR": "dsp",
     "SagEvaluator": "evaluation",
     "SyntheticSagAmp": "synthetic",
+    "resolve_device": "utils",
+    "configure_backends": "utils",
 }
 
 

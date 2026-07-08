@@ -16,6 +16,36 @@ import torch
 AudioSource = Union[str, Path, np.ndarray, torch.Tensor]
 
 
+def resolve_device(preference: Optional[str] = None) -> torch.device:
+    """Pick a compute device, preferring CUDA, then Apple MPS, then CPU.
+
+    ``preference`` may be an explicit device string (``"cuda"``, ``"mps"``,
+    ``"cpu"``); ``None`` or ``"auto"`` auto-selects.  The model is float32
+    throughout, so it runs on MPS (which lacks float64) without changes.
+    """
+    if preference and preference != "auto":
+        return torch.device(preference)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def configure_backends(device: torch.device) -> None:
+    """Enable safe, device-appropriate performance backends.
+
+    On CUDA this turns on cuDNN autotuning (a free speedup for the fixed-shape
+    LSTM).  Note: the supply ODE integrates over tens of thousands of Euler
+    steps and *must* stay in float32 -- float16/AMP cannot resolve ~0.01 V
+    changes on a ~415 V rail, so mixed precision is deliberately not enabled on
+    the physics path.
+    """
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+
+
 def to_mono_tensor(array: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
     """Return a 1-D float32 tensor, averaging channels if the input is 2-D."""
     if isinstance(array, torch.Tensor):

@@ -82,15 +82,18 @@ class SyntheticSagAmp:
 
     # --------------------------------------------------------------- helpers
     def _envelope(self, x: torch.Tensor) -> torch.Tensor:
-        """One-pole envelope follower on ``|x|`` (shape preserved)."""
+        """One-pole envelope follower on ``|x|`` (shape preserved).
+
+        A one-pole IIR ``env[n] = beta*env[n-1] + (1-beta)*|x[n]|`` is a linear
+        recursive filter, so it runs in vectorised C via ``scipy.signal.lfilter``
+        along the time axis instead of a Python sample loop.
+        """
+        from scipy.signal import lfilter
+
         beta = self.env_beta
-        env = torch.zeros_like(x)
-        prev = torch.zeros(x.shape[0], 1, dtype=x.dtype)
-        rectified = x.abs()
-        for n in range(x.shape[1]):
-            prev = beta * prev + (1.0 - beta) * rectified[:, n, :]
-            env[:, n, :] = prev
-        return env
+        rect = x.abs().detach().cpu().numpy()
+        env = lfilter([1.0 - beta], [1.0, -beta], rect, axis=1)
+        return torch.from_numpy(env.astype(np.float32)).to(x.device)
 
     # -------------------------------------------------------------- generate
     @torch.no_grad()
