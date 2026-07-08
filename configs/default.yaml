@@ -1,6 +1,10 @@
 # Default configuration for the power-sag gray-box amp model.
 # Values based on a Fender Deluxe Reverb AB763 with GZ34 tube rectifier.
 
+# --- Experiment ---
+seed: 0                   # RNG seed for reproducible runs
+model: physics            # physics | no_physics | black_box (see nn.build_model)
+
 # --- Sampling ---
 fs: 48000                 # sample rate (Hz)
 

@@ -105,7 +105,7 @@ def test_lstm_state_threading_matches_monolithic():
         ys, V, state = [], None, None
         for start in range(0, 90, 30):
             chunk = x[:, start : start + 30]
-            y_c, V, state = model(chunk, V0=V, lstm_state=state, return_state=True)
+            y_c, V, state = model(chunk, V0=V, state=state, return_state=True)
             ys.append(y_c)
     y_chunked = torch.cat(ys, dim=1)
     assert torch.allclose(y_full, y_chunked, atol=1e-5)

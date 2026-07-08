@@ -1,0 +1,6 @@
+# Proposed gray-box model (physics ODE + coupling + FiLM audio path).
+# Reproduce: python scripts/train.py --input di.wav --target amp.wav \
+#            --config configs/experiment_physics.yaml --out physics.pt
+defaults: default.yaml    # inherit all shared hyperparameters
+model: physics
+seed: 0

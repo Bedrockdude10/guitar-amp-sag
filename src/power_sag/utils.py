@@ -16,6 +16,41 @@ import torch
 AudioSource = Union[str, Path, np.ndarray, torch.Tensor]
 
 
+def seed_everything(seed: int = 0, deterministic: bool = False) -> int:
+    """Seed Python, NumPy and PyTorch RNGs for reproducible experiments.
+
+    Returns the seed so callers can log it. With ``deterministic=True`` it also
+    requests deterministic cuDNN algorithms (slower, but bit-reproducible on the
+    same hardware) -- useful when generating paper numbers.
+    """
+    import random
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    return seed
+
+
+def detach_state(state):
+    """Recursively detach a recurrent state (tensor, tuple/list, or ``None``).
+
+    Lets the trainer truncate BPTT uniformly across models whose state is a
+    tensor (none), an LSTM ``(h, c)`` pair, or a nested tuple of both.
+    """
+    if state is None:
+        return None
+    if isinstance(state, torch.Tensor):
+        return state.detach()
+    if isinstance(state, (tuple, list)):
+        return type(state)(detach_state(s) for s in state)
+    return state
+
+
 def resolve_device(preference: Optional[str] = None) -> torch.device:
     """Pick a compute device, preferring CUDA, then Apple MPS, then CPU.
 

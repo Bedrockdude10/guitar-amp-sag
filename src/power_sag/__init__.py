@@ -38,6 +38,7 @@ __all__ = [
     "SyntheticSagAmp",
     "resolve_device",
     "configure_backends",
+    "seed_everything",
 ]
 
 # Maps public name -> submodule providing it (kept lazy so ``import power_sag``
@@ -60,6 +61,7 @@ _EXPORTS = {
     "SyntheticSagAmp": "synthetic",
     "resolve_device": "utils",
     "configure_backends": "utils",
+    "seed_everything": "utils",
 }
 
 

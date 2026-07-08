@@ -134,7 +134,7 @@ class PowerSagModel(nn.Module):
         self,
         x: torch.Tensor,
         V0: Optional[torch.Tensor] = None,
-        lstm_state: Optional[LSTMState] = None,
+        state: Optional[LSTMState] = None,
         return_state: bool = False,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, LSTMState]]:
         """End-to-end forward pass.
@@ -145,24 +145,26 @@ class PowerSagModel(nn.Module):
             Input signal, shape ``(batch, seq_len, 1)``.
         V0:
             Optional initial supply state ``(batch, 1)``.
-        lstm_state:
+        state:
             Optional initial LSTM state ``(h, c)`` for stateful continuation
-            across chunks/segments (used by truncated BPTT).
+            across chunks/segments (used by truncated BPTT).  Named ``state``
+            (not ``lstm_state``) so every model shares one forward signature
+            ``(x, V0, state, return_state)`` and the trainer stays model-agnostic.
         return_state:
-            If ``True`` also return the final ``V_B+`` and LSTM state, so both
-            slow (physics) and fast (LSTM) states can be carried forward.
+            If ``True`` also return the final ``V_B+`` and recurrent state, so
+            both slow (physics) and fast (LSTM) states can be carried forward.
 
         Returns
         -------
-        ``y`` of shape ``(batch, seq_len, 1)`` (or ``(y, V_final, lstm_state)``).
+        ``y`` of shape ``(batch, seq_len, 1)`` (or ``(y, V_final, state)``).
         """
         if x.dim() != 3 or x.size(-1) != 1:
             raise ValueError("x must have shape (batch, seq_len, 1)")
 
         V_seq, V_final = self.supply_trajectory(x, V0)
-        y, lstm_state = self.audio(x, V_seq, lstm_state)
+        y, state = self.audio(x, V_seq, state)
         if self.cabinet is not None:
             y = self.cabinet(y)
         if return_state:
-            return y, V_final, lstm_state
+            return y, V_final, state
         return y
