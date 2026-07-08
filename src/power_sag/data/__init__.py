@@ -1,5 +1,5 @@
-"""Datasets for training the power-sag model."""
+"""Datasets and samplers for training the power-sag model."""
 
-from .datasets import AudioDataset, SequenceDataset
+from .datasets import AudioDataset, SequenceBatchSampler, SequenceDataset
 
-__all__ = ["AudioDataset", "SequenceDataset"]
+__all__ = ["AudioDataset", "SequenceDataset", "SequenceBatchSampler"]

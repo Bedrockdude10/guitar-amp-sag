@@ -36,6 +36,11 @@ lr: 5.0e-4
 epochs: 100
 preemph_weight: 1.0       # λ for the pre-emphasis loss term
 preemph_coeff: 0.85       # first-order pre-emphasis filter coefficient
+# Truncated BPTT: detach hidden state and step every N samples within a segment
+# to bound memory (null = full BPTT over the whole segment). Sag time constants
+# (~15 ms => ~720 samples at 48 kHz) fit comfortably inside a few thousand.
+tbptt_steps: 2048
+use_script: true          # TorchScript the coupling+physics recurrence (scalar R_eff)
 
 # --- Cabinet IR ---
 cabinet_ir: null          # path to a .wav impulse response, or null to bypass

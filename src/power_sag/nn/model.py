@@ -20,8 +20,9 @@ import torch
 import torch.nn as nn
 
 from ..physics import PowerSupplyODE
-from .audio_model import PowerSagLSTM
+from .audio_model import LSTMState, PowerSagLSTM
 from .coupling import CouplingNetwork
+from .recurrence import SupplyRecurrence
 
 
 class PowerSagModel(nn.Module):
@@ -39,6 +40,30 @@ class PowerSagModel(nn.Module):
         self.coupling = coupling or CouplingNetwork()
         self.audio = audio or PowerSagLSTM()
         self.cabinet = cabinet  # fixed processing stage, not trained
+        self.use_script = False  # opt-in TorchScript fast path for the recurrence
+
+    # ------------------------------------------------------------ scripting
+    def enable_script(self) -> None:
+        """Compile the coupling+physics recurrence with TorchScript.
+
+        Roughly halves CPU wall time (more on GPU) for the sample-by-sample
+        supply trajectory.  Only the scalar ``R_eff`` mode is accelerated; the
+        nonlinear GZ34 model always uses the eager loop.  The scripted module
+        shares its parameters with the eager modules, so training still works,
+        but call this **after** moving the model to its device.
+        """
+        recurrence = torch.jit.script(
+            SupplyRecurrence(self.coupling, self.physics.Ts)
+        )
+        # Bypass nn.Module.__setattr__ so the scripted module (whose parameters
+        # are shared with self.coupling) is not registered as a submodule and
+        # therefore not double-counted in ``parameters()``.
+        object.__setattr__(self, "_scripted_recurrence", recurrence)
+        self.use_script = True
+
+    def disable_script(self) -> None:
+        """Revert to the eager Python recurrence."""
+        self.use_script = False
 
     # ---------------------------------------------------------------- factory
     @classmethod
@@ -83,14 +108,21 @@ class PowerSagModel(nn.Module):
         (state before applying each sample's load current) and ``V_final`` the
         terminal state for stateful continuation.
         """
-        batch, seq_len, _ = x.shape
+        batch = x.shape[0]
         V = (
             self.physics.init_state(batch, x.device, x.dtype)
             if V0 is None
             else V0
         )
+
+        # Fast path: scripted recurrence (scalar R_eff only).
+        if self.use_script and self.physics.reff_mode == "scalar":
+            return self._scripted_recurrence(
+                x, self.physics.C1, self.physics.V_oc, self.physics._R_eff, V
+            )
+
         states = []
-        for n in range(seq_len):
+        for n in range(x.shape[1]):
             states.append(V)
             x_n = x[:, n : n + 1, :]  # (batch, 1, 1)
             I_n = self.coupling(x_n, V.unsqueeze(1)).squeeze(1)  # (batch, 1)
@@ -102,8 +134,9 @@ class PowerSagModel(nn.Module):
         self,
         x: torch.Tensor,
         V0: Optional[torch.Tensor] = None,
+        lstm_state: Optional[LSTMState] = None,
         return_state: bool = False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, LSTMState]]:
         """End-to-end forward pass.
 
         Parameters
@@ -112,8 +145,12 @@ class PowerSagModel(nn.Module):
             Input signal, shape ``(batch, seq_len, 1)``.
         V0:
             Optional initial supply state ``(batch, 1)``.
+        lstm_state:
+            Optional initial LSTM state ``(h, c)`` for stateful continuation
+            across chunks/segments (used by truncated BPTT).
         return_state:
-            If ``True`` also return the final ``V_B+`` and LSTM state.
+            If ``True`` also return the final ``V_B+`` and LSTM state, so both
+            slow (physics) and fast (LSTM) states can be carried forward.
 
         Returns
         -------
@@ -123,7 +160,7 @@ class PowerSagModel(nn.Module):
             raise ValueError("x must have shape (batch, seq_len, 1)")
 
         V_seq, V_final = self.supply_trajectory(x, V0)
-        y, lstm_state = self.audio(x, V_seq)
+        y, lstm_state = self.audio(x, V_seq, lstm_state)
         if self.cabinet is not None:
             y = self.cabinet(y)
         if return_state:

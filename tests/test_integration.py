@@ -11,16 +11,28 @@ tests wire the pieces into the flows they actually run in:
 * the cabinet IR attached as the model's final stage.
 """
 
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from power_sag import load_config
-from power_sag.data import AudioDataset, SequenceDataset
+from power_sag.data import AudioDataset, SequenceBatchSampler, SequenceDataset
 from power_sag.dsp import CabinetIR
 from power_sag.evaluation import SagEvaluator
 from power_sag.losses import ESRLoss, PreEmphasisLoss
 from power_sag.nn import PowerSagModel
+
+
+def _load_train_module():
+    """Import scripts/train.py as a module to test its training helpers."""
+    path = Path(__file__).resolve().parents[1] / "scripts" / "train.py"
+    spec = importlib.util.spec_from_file_location("_train_script", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def small_config(seg_len=48):
@@ -191,3 +203,68 @@ def test_model_with_cabinet_stage():
         if p.grad is not None
     )
     assert trainable_grad > 0
+
+
+# --------------------------------------------------------------------------- #
+# Training script helpers (sampler-driven stateful loop + truncated BPTT)     #
+# --------------------------------------------------------------------------- #
+def test_train_segment_truncates_bptt_and_learns():
+    train = _load_train_module()
+    cfg = small_config(seg_len=64)
+    model = build_model(cfg)
+
+    torch.manual_seed(3)
+    inp = 0.5 * torch.randn(1, cfg["segment_len"], 1)
+    tgt = 0.5 * torch.randn(1, cfg["segment_len"], 1)
+    esr, preemph = ESRLoss(), PreEmphasisLoss(coeff=cfg["preemph_coeff"])
+    opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+
+    # Chunked (tbptt=16) run over a 64-sample segment: 4 optimiser steps.
+    loss0, V_final = train.train_segment(
+        model, opt, inp, tgt, torch.full((1, 1), 415.0), 16, esr, preemph, 1.0
+    )
+    # The carried terminal state is detached (graph does not span segments).
+    assert not V_final.requires_grad and V_final.grad_fn is None
+    assert V_final.shape == (1, 1)
+
+    # A few more segment passes reduce the loss.
+    losses = [loss0]
+    for _ in range(15):
+        loss, _ = train.train_segment(
+            model, opt, inp, tgt, torch.full((1, 1), 415.0), 16, esr, preemph, 1.0
+        )
+        losses.append(loss)
+    assert losses[-1] < losses[0]
+
+
+def test_sampler_driven_stateful_loop_carries_state_per_lane():
+    """Two recordings, batch_size=2: each lane carries its own recording's
+    state; boundaries between recordings reset to V_idle."""
+    cfg = small_config(seg_len=40)
+    model = build_model(cfg)
+    V_idle = float(cfg["V_idle"])
+
+    rng = np.random.default_rng(4)
+    recs = [
+        (rng.standard_normal(40 * 3).astype(np.float32),) * 2,
+        (rng.standard_normal(40 * 2).astype(np.float32),) * 2,
+    ]
+    ds = SequenceDataset(
+        segment_len=40, V_idle=V_idle, normalize=True, recordings=recs
+    )
+    sampler = SequenceBatchSampler(ds, batch_size=2, shuffle=False)
+
+    with torch.no_grad():
+        for batch_idx in sampler:
+            V0 = torch.stack([ds[i][2] for i in batch_idx]).view(-1, 1)
+            inp = torch.stack([ds[i][0] for i in batch_idx])
+            _, V_final, _ = model(inp, V0=V0, return_state=True)
+            for b, idx in enumerate(batch_idx):
+                ds.update_state(idx, V_final[b])
+
+    # Recording 1's first segment (global index 3) never inherited recording 0's
+    # terminal state.
+    assert ds.recording_of == [0, 0, 0, 1, 1]
+    assert torch.allclose(ds[3][2], torch.tensor(V_idle))
+    # But a mid-recording segment did get a non-idle carried state.
+    assert not torch.allclose(ds[1][2], torch.tensor(V_idle))

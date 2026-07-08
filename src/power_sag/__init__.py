@@ -30,6 +30,7 @@ __all__ = [
     "PreEmphasisLoss",
     "AudioDataset",
     "SequenceDataset",
+    "SequenceBatchSampler",
     "CabinetIR",
     "SagEvaluator",
 ]
@@ -46,6 +47,7 @@ _EXPORTS = {
     "PreEmphasisLoss": "losses",
     "AudioDataset": "data",
     "SequenceDataset": "data",
+    "SequenceBatchSampler": "data",
     "CabinetIR": "dsp",
     "SagEvaluator": "evaluation",
 }

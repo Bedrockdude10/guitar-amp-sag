@@ -19,6 +19,16 @@ def test_identity_when_gamma_one_beta_zero():
     assert torch.allclose(out, h, atol=1e-6)
 
 
+def test_default_init_is_identity_at_zero_conditioning():
+    """At V_B+ = V_idle the conditioning input is 0, so the default init must
+    give gamma=1, beta=0 (output == input) -- not the common gamma=0 mistake."""
+    layer = FiLMLayer(feature_dim=12, cond_dim=1)  # default init, weights NOT zeroed
+    h = torch.randn(2, 10, 12)
+    v = torch.zeros(2, 10, 1)  # normalised supply at idle
+    out = layer(h, v)
+    assert torch.allclose(out, h, atol=1e-6)
+
+
 def test_output_shape_matches_input():
     layer = FiLMLayer(feature_dim=16, cond_dim=1)
     h = torch.randn(4, 25, 16)

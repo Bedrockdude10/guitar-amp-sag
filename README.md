@@ -41,9 +41,10 @@ src/power_sag/
     coupling.py        CouplingNetwork — MLP (x, V_B+) -> I_load (non-negative)
     film.py            FiLMLayer — feature-wise linear modulation
     audio_model.py     PowerSagLSTM — LSTM audio path, FiLM-conditioned on V_B+
+    recurrence.py      SupplyRecurrence — TorchScript-able coupling+physics loop
     model.py           PowerSagModel — full end-to-end coupled model
   data/
-    datasets.py        AudioDataset, SequenceDataset (stateful segment sampler)
+    datasets.py        AudioDataset, SequenceDataset, SequenceBatchSampler
   dsp/
     cabinet.py         CabinetIR — fixed (non-trainable) speaker/mic convolution
   evaluation/
@@ -58,6 +59,35 @@ Shared helpers in `utils.py` (`load_audio`, `to_mono_tensor`, `normalize_audio`,
 `normalize_supply`) removed the audio-loading duplication between `data` and
 `dsp`, and the `(V_B+ - V_idle)/delta_V` conditioning duplication between the
 coupling and audio-path networks.
+
+## Stateful training: correctness and performance
+
+Power sag is a slow hidden state, so training carries `V_B+` across segment
+boundaries. A few things this depends on — each locked down by tests:
+
+- **Sequence-level shuffling.** A plain `DataLoader(shuffle=True)` shuffles
+  individual segments and would feed most of them a `V_B+` initial condition
+  from an unrelated segment — silent corruption. Use `SequenceBatchSampler`,
+  which shuffles at the *recording* level and keeps each recording's segments in
+  order. `SequenceDataset` supports multiple recordings and never carries state
+  across a recording boundary (each recording's first segment starts at
+  `V_idle`).
+- **Detached state at boundaries.** The carried `V_B+` is `.detach()`ed, so the
+  autograd graph does not grow with the number of sequential segments (truncated
+  BPTT at the boundary — state continuity without gradient continuity).
+- **Truncated BPTT within a segment** (`tbptt_steps`). A 0.5 s segment is 24k
+  LSTM steps; `train.py` processes it in chunks, carrying and detaching both the
+  supply and LSTM state between chunks to bound memory. Sag time constants
+  (~15 ms ≈ 720 samples) fit comfortably inside a chunk.
+- **TorchScript fast path** (`use_script`, opt-in via `model.enable_script()`).
+  The sample-by-sample coupling+physics recurrence is dominated by Python
+  dispatch; scripting it is ~4× faster on CPU (more on GPU) with bit-identical
+  results. It reuses `CouplingNetwork.forward` and `euler_step` verbatim (an
+  equivalence test guards against drift) and shares parameters with the eager
+  modules, so it trains normally.
+- **FiLM identity init.** The FiLM biases init to `γ=1, β=0`, so at `V_B+ =
+  V_idle` (conditioning input `0`) the layer is exactly the identity — it does
+  not zero out the audio path at the start of training.
 
 ## Install
 

@@ -22,6 +22,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def euler_step(
+    V: torch.Tensor,
+    I_load: torch.Tensor,
+    Ts: float,
+    C1: torch.Tensor,
+    V_oc: torch.Tensor,
+    R_eff: torch.Tensor,
+) -> torch.Tensor:
+    """One explicit-Euler update of the power-supply ODE, clamped to ``[0, V_oc]``.
+
+    This is the single source of truth for the discretised update: both the
+    eager :meth:`PowerSupplyODE.step` and the optional TorchScript recurrence
+    (:mod:`power_sag.nn.recurrence`) call it, so the two paths cannot drift
+    apart.  It is a plain function -- TorchScript compiles it automatically
+    when it is reached from a scripted module.
+
+    Note: the clamp zeroes the local gradient whenever ``V_B+`` saturates at a
+    bound.  In normal operation neither bound is reached -- with ``I_load >= 0``
+    (guaranteed by the coupling's softplus) ``V_B+`` approaches ``V_oc`` from
+    below and only nears ``0`` under pathological current draw -- so physics
+    gradients are unaffected in practice.
+    """
+    dV = (Ts / C1) * ((V_oc - V) / R_eff - I_load)
+    V_next = torch.minimum(V + dV, V_oc * torch.ones_like(V))
+    return torch.clamp(V_next, min=0.0)
+
+
 class PowerSupplyODE(nn.Module):
     """Explicit-Euler power-supply model with a GZ34-style ``R_eff`` option.
 
@@ -125,12 +152,7 @@ class PowerSupplyODE(nn.Module):
         nor fall below ground).
         """
         R = self.r_eff(I_load)
-        dV = (self.Ts / self.C1) * ((self.V_oc - V) / R - I_load)
-        V_next = V + dV
-        # Bound the state: clamp with tensor-valued upper limit V_oc.
-        V_next = torch.minimum(V_next, self.V_oc * torch.ones_like(V_next))
-        V_next = torch.clamp(V_next, min=0.0)
-        return V_next
+        return euler_step(V, I_load, self.Ts, self.C1, self.V_oc, R)
 
     def forward(
         self,
