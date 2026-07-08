@@ -2,7 +2,7 @@
 
 import torch
 
-from power_sag.audio_model import PowerSagLSTM
+from power_sag.nn import PowerSagLSTM
 
 
 def test_forward_shape():

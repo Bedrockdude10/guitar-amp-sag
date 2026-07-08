@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from ..utils import normalize_supply
 from .film import FiLMLayer
 
 LSTMState = Tuple[torch.Tensor, torch.Tensor]
@@ -75,7 +76,7 @@ class PowerSagLSTM(nn.Module):
             Output signal ``(batch, seq_len, 1)`` and the final LSTM state.
         """
         h_seq, state = self.lstm(x, state)
-        v_norm = (V - self.V_idle) / self.delta_V
+        v_norm = normalize_supply(V, self.V_idle, self.delta_V)
         h_mod = self.film(h_seq, v_norm)
         y = self.output(h_mod)
         return y, state

@@ -27,21 +27,37 @@ x[n] ─────────────────────────
 
 ## Layout
 
+Modules are grouped by role. Every public class is re-exported at the package
+root, so `from power_sag import PowerSagModel` works regardless of layout.
+
 ```
 src/power_sag/
-  physics.py     PowerSupplyODE — differentiable Euler power-supply ODE + GZ34 R_eff
-  coupling.py    CouplingNetwork — MLP (x, V_B+) -> I_load (non-negative)
-  film.py        FiLMLayer — feature-wise linear modulation
-  audio_model.py PowerSagLSTM — LSTM audio path with FiLM conditioning on V_B+
-  model.py       PowerSagModel — full end-to-end coupled model
-  loss.py        ESRLoss, PreEmphasisLoss
-  data.py        AudioDataset, SequenceDataset (stateful ordered segment sampler)
-  cabinet.py     CabinetIR — fixed (non-trainable) speaker/mic convolution
-  evaluation.py  SagEvaluator — sag test signals + recovery-curve fitting
+  config.py            load_config (reads configs/*.yaml)
+  utils.py             shared audio I/O, normalisation, supply-voltage scaling
+  losses.py            ESRLoss, PreEmphasisLoss
+  physics/
+    ode.py             PowerSupplyODE — differentiable Euler ODE + GZ34 R_eff
+  nn/
+    coupling.py        CouplingNetwork — MLP (x, V_B+) -> I_load (non-negative)
+    film.py            FiLMLayer — feature-wise linear modulation
+    audio_model.py     PowerSagLSTM — LSTM audio path, FiLM-conditioned on V_B+
+    model.py           PowerSagModel — full end-to-end coupled model
+  data/
+    datasets.py        AudioDataset, SequenceDataset (stateful segment sampler)
+  dsp/
+    cabinet.py         CabinetIR — fixed (non-trainable) speaker/mic convolution
+  evaluation/
+    evaluator.py       SagEvaluator — sag test signals + recovery-curve fitting
 configs/default.yaml   all hyperparameters (Deluxe Reverb AB763 defaults)
 scripts/               train.py, capture.py, evaluate.py
 tests/                 pytest suite covering every mathematical invariant
+.github/workflows/     ci.yml — runs pytest on push / PR
 ```
+
+Shared helpers in `utils.py` (`load_audio`, `to_mono_tensor`, `normalize_audio`,
+`normalize_supply`) removed the audio-loading duplication between `data` and
+`dsp`, and the `(V_B+ - V_idle)/delta_V` conditioning duplication between the
+coupling and audio-path networks.
 
 ## Install
 

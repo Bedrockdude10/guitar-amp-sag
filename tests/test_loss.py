@@ -2,7 +2,7 @@
 
 import torch
 
-from power_sag.loss import ESRLoss, PreEmphasisLoss
+from power_sag.losses import ESRLoss, PreEmphasisLoss
 
 
 def test_esr_zero_when_equal():

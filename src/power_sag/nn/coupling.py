@@ -12,6 +12,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..utils import normalize_supply
+
 
 class CouplingNetwork(nn.Module):
     """MLP mapping ``(x, V_B+) -> I_load`` (non-negative).
@@ -47,7 +49,7 @@ class CouplingNetwork(nn.Module):
         V:
             Supply voltage, shape ``(batch, seq_len, 1)``.
         """
-        v_norm = (V - self.V_idle) / self.delta_V
+        v_norm = normalize_supply(V, self.V_idle, self.delta_V)
         features = torch.cat([x, v_norm], dim=-1)
         raw = self.net(features)
         return F.softplus(raw)

@@ -3,7 +3,7 @@
 import torch
 
 from power_sag import load_config
-from power_sag.model import PowerSagModel
+from power_sag.nn import PowerSagModel
 
 
 def build_model():

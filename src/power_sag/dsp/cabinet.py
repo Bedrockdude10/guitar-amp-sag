@@ -16,6 +16,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ..utils import load_audio
+
 
 class CabinetIR(nn.Module):
     """Causal linear convolution with a fixed impulse response.
@@ -45,18 +47,7 @@ class CabinetIR(nn.Module):
 
     @staticmethod
     def _load(ir: Union[str, Path, np.ndarray, torch.Tensor]) -> torch.Tensor:
-        if isinstance(ir, torch.Tensor):
-            taps = ir.detach().to(torch.float32).flatten()
-        elif isinstance(ir, np.ndarray):
-            taps = torch.from_numpy(np.asarray(ir, dtype=np.float32)).flatten()
-        else:
-            import soundfile as sf
-
-            data, _ = sf.read(str(ir), dtype="float32", always_2d=False)
-            data = np.asarray(data, dtype=np.float32)
-            if data.ndim == 2:
-                data = data.mean(axis=1)
-            taps = torch.from_numpy(data)
+        taps = load_audio(ir)
         if taps.numel() == 0:
             raise ValueError("impulse response must have at least one tap")
         return taps

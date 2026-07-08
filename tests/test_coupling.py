@@ -2,7 +2,7 @@
 
 import torch
 
-from power_sag.coupling import CouplingNetwork
+from power_sag.nn import CouplingNetwork
 
 
 def test_output_shape():

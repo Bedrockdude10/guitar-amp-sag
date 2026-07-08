@@ -2,7 +2,7 @@
 
 import torch
 
-from power_sag.cabinet import CabinetIR
+from power_sag.dsp import CabinetIR
 
 
 def test_output_length_equals_input_length():

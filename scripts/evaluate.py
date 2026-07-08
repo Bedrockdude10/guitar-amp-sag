@@ -21,7 +21,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from power_sag.evaluation import SagEvaluator  # noqa: E402
-from power_sag.model import PowerSagModel  # noqa: E402
+from power_sag.nn import PowerSagModel  # noqa: E402
 
 
 def rms_envelope(signal: torch.Tensor, win: int) -> torch.Tensor:

@@ -2,7 +2,7 @@
 
 import torch
 
-from power_sag.film import FiLMLayer
+from power_sag.nn import FiLMLayer
 
 
 def test_identity_when_gamma_one_beta_zero():

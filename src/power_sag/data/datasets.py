@@ -15,21 +15,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-
-def _to_mono_tensor(array: np.ndarray) -> torch.Tensor:
-    """Convert a (frames,) or (frames, channels) array to a 1-D float tensor."""
-    data = np.asarray(array, dtype=np.float32)
-    if data.ndim == 2:
-        data = data.mean(axis=1)
-    return torch.from_numpy(data)
-
-
-def normalize_audio(x: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
-    """Peak-normalise a signal into ``[-1, 1]`` (divide by max abs value)."""
-    peak = x.abs().max()
-    if peak < eps:
-        return x
-    return x / peak
+from ..utils import load_audio, normalize_audio, to_mono_tensor
 
 
 class AudioDataset(Dataset):
@@ -44,25 +30,14 @@ class AudioDataset(Dataset):
         target_source: Union[str, Path, np.ndarray, torch.Tensor],
         normalize: bool = True,
     ) -> None:
-        self.input = self._load(input_source)
-        self.target = self._load(target_source)
+        self.input = load_audio(input_source)
+        self.target = load_audio(target_source)
         n = min(len(self.input), len(self.target))
         self.input = self.input[:n]
         self.target = self.target[:n]
         if normalize:
             self.input = normalize_audio(self.input)
             self.target = normalize_audio(self.target)
-
-    @staticmethod
-    def _load(source: Union[str, Path, np.ndarray, torch.Tensor]) -> torch.Tensor:
-        if isinstance(source, torch.Tensor):
-            return source.detach().to(torch.float32).flatten()
-        if isinstance(source, np.ndarray):
-            return _to_mono_tensor(source)
-        import soundfile as sf  # local import: only needed for file loading
-
-        data, _ = sf.read(str(source), dtype="float32", always_2d=False)
-        return _to_mono_tensor(data)
 
     def __len__(self) -> int:
         return 1
@@ -106,8 +81,8 @@ class SequenceDataset(Dataset):
         self.segment_len = int(segment_len)
         self.V_idle = float(V_idle)
 
-        x = self._as_tensor(input_audio)
-        t = self._as_tensor(target_audio)
+        x = to_mono_tensor(input_audio)
+        t = to_mono_tensor(target_audio)
         n = min(len(x), len(t))
         x, t = x[:n], t[:n]
         if normalize:
@@ -133,12 +108,6 @@ class SequenceDataset(Dataset):
             torch.tensor(self.V_idle, dtype=torch.float32)
             for _ in self.input_segments
         ]
-
-    @staticmethod
-    def _as_tensor(audio: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
-        if isinstance(audio, torch.Tensor):
-            return audio.detach().to(torch.float32).flatten()
-        return _to_mono_tensor(audio)
 
     def __len__(self) -> int:
         return len(self.input_segments)

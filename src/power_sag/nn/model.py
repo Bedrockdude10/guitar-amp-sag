@@ -19,9 +19,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from ..physics import PowerSupplyODE
 from .audio_model import PowerSagLSTM
 from .coupling import CouplingNetwork
-from .physics import PowerSupplyODE
 
 
 class PowerSagModel(nn.Module):

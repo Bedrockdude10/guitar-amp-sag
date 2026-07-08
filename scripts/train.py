@@ -24,10 +24,10 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from power_sag import load_config  # noqa: E402
-from power_sag.cabinet import CabinetIR  # noqa: E402
 from power_sag.data import SequenceDataset  # noqa: E402
-from power_sag.loss import ESRLoss, PreEmphasisLoss  # noqa: E402
-from power_sag.model import PowerSagModel  # noqa: E402
+from power_sag.dsp import CabinetIR  # noqa: E402
+from power_sag.losses import ESRLoss, PreEmphasisLoss  # noqa: E402
+from power_sag.nn import PowerSagModel  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
