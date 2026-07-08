@@ -35,9 +35,12 @@ bloom on the decay, and creates the "touch sensitive" feel that players prize in
   to learn sag implicitly from the audio signal alone, rather than from the known governing equations.
 
 **The literature gap:** No published work explicitly targets power supply sag as a neural modeling
-objective. The closest analogous work is Simionato & Fasciani (JAES 2025), who model optical
+objective (confirmed by a July 2026 review — see §3.7 for the closest prior work and the
+differentiator). The closest *analogous* work is Simionato & Fasciani (JAES 2025), who model optical
 compressor dynamics — a structurally similar problem (slow opto-isolator hidden state) — using
-Mamba/S6 selective state space models. That result is the proof of concept we build from.
+Mamba/S6 selective state space models. That result is the proof of concept we build from. The
+closest *guitar-amp* work is the DDSP Guitar Amp (Yeh et al., ICASSP 2025), which models a power-amp
+stage differentiably but does not treat sag as a dynamic supply-voltage state.
 
 ---
 
@@ -131,6 +134,25 @@ structure + neural residual for compressors.
 power supply, discretized at audio sample rate using explicit Euler. Exact formulation we adapt.
 `ampbooks.com/mobile/dsp/power-supply/`
 
+**Wilczek, Wright, Välimäki & Habets (2022)** — *Virtual Analog Modeling of Distortion Circuits
+Using Neural Ordinary Differential Equations* (DAFx, arXiv 2205.01897). Learns the ODE of a
+first-/second-order diode clipper; physically interpretable, no oversampling, sample-rate can be
+raised after training. The key precedent for *neural-ODE VA modeling*, but the ODE governs a
+**local, fast** distortion nonlinearity — not a slow latent supply state. We adopt the neural-ODE
+idea and apply it to a different subsystem (the power supply).
+
+**Yeh et al. (2025)** — *DDSP Guitar Amp: Interpretable Guitar Amplifier Modeling* (ICASSP, arXiv
+2408.11405). The closest competitor: a differentiable, modular amp (preamp / tone stack / power
+amp / output transformer). Its power amp is a push-pull *waveshaping* nonlinearity and its output
+transformer a GRU(hidden=1) for *hysteresis*; power-supply sag is noted as motivation but is **not
+modeled as a dynamic supply-voltage state**. This is the paper to differentiate most carefully.
+[PDF pending verification of the power-amp section.]
+
+**Comunità et al. — NablAFx (2025, arXiv 2502.11668)** and *Differentiable Black-box and Gray-box
+Modeling of Nonlinear Audio Effects* (arXiv 2502.14405). General differentiable gray-box effect
+frameworks with time-varying latent conditioning, but no power-supply-sag model. Potentially a
+framework to build *within* rather than a competitor.
+
 #### 3.5 Universal Differential Equations (The Broader Framework)
 
 **Rackauckas et al. (2020)** — *Universal Differential Equations for Scientific Machine Learning*.
@@ -149,6 +171,35 @@ sensitivity analysis.
 - Differentiable allpass filters (various, 2022–2024)
 - Port-Hamiltonian formulations for passivity preservation (Falaize, Hélie, Najnudel, Bernardini)
 - Deep WDF with Lipschitz-bounded NNs (Massi, Manino, Bernardini, DAFx-24)
+
+#### 3.7 Novelty verification (literature review, July 2026)
+
+A targeted review (arXiv / JAES / DAFx / ICASSP, English) found **no published work that models
+guitar-amplifier power-supply sag as a learned, physics-informed differentiable ODE** — a latent
+B+ supply state governed by an RC/rectifier equation, driven by a *neural* load-current coupling,
+conditioning a neural audio path, trained end-to-end. Supporting signal: reviews of block-oriented
+gray-box (Wiener–Hammerstein) amp models explicitly list **power sagging among the effects those
+models cannot capture** — i.e. it is a recognised open gap, not an oversight.
+
+**Closest prior work and how ours differs:**
+
+| Prior work | What it does | How ours differs |
+|---|---|---|
+| DDSP Guitar Amp (Yeh 2025) | Differentiable modular amp; power amp = waveshaper, transformer = GRU hysteresis | Sag mentioned but not a modeled supply state; we make B+ an explicit differentiable-ODE latent |
+| Neural-ODE VA (Wilczek 2022) | Learns ODE of a diode-clipper distortion circuit | Local fast nonlinearity vs. our slow global supply state |
+| Optical-compressor SSM (Simionato 2025) | Slow hidden state via learned Mamba/S4 | Same problem *class*, different effect; we use *known physics*, not a learned SSM |
+| Gray-box frameworks (NablAFx/Comunità 2025) | Generic differentiable gray-box effects | No sag model; a possible host framework, not a competitor |
+| Commercial (Fractal MIMIC, AmpBooks) | Sag via hand-crafted circuit-knowledge DSP + a sag knob | Not learned/trained; we fit the coupling and (optionally) physics from amp audio |
+
+**Defensible novelty claim.** First neural amp model to target power-supply sag *explicitly*, via a
+Universal-Differential-Equations framing — a differentiable RC/rectifier ODE for the latent B+
+state with a learned load-current coupling, trained end-to-end against amp audio — versus prior work
+that omits sag (DDSP amp, WH gray-box), learns an unstructured slow state for a *different* effect
+(optical-compressor SSM), or hand-crafts it in DSP (Fractal).
+
+**Caveats.** (1) Rests on abstracts/summaries; full PDFs pending — verify the DDSP-amp power-amp
+section, the one possible partial overlap. (2) English/arXiv-biased; re-check near submission for a
+DAFx-2026 or thesis in the pipeline.
 
 ---
 
@@ -741,3 +792,6 @@ transformer saturation.
 - [DAHMAN2024] Dahman Music (2024). 1966 Deluxe Reverb Cabinet with Jensen C12Q IR Collection. *Tone3000*.
 - [FRACTAL2013] Fractal Audio Systems (2013). Multipoint Iterative Matching and Impedance Correction Technology (MIMIC). Technical white paper.
 - [CARSON2024] Carson, A., Wright, A., Chowdhury, J., Välimäki, V., Bilbao, S. (2024). Sample rate independent recurrent neural networks for audio effects processing. *arXiv:2406.06293*.
+- [WILCZEK2022] Wilczek, J., Wright, A., Välimäki, V., Habets, E.A.P. (2022). Virtual analog modeling of distortion circuits using neural ordinary differential equations. *DAFx-22*, arXiv:2205.01897.
+- [YEH2025] Yeh, et al. (2025). DDSP guitar amp: interpretable guitar amplifier modeling. *ICASSP 2025*, arXiv:2408.11405.
+- [COMUNITA2025] Comunità, M., et al. (2025). NablAFx: a framework for differentiable black-box and gray-box modeling of audio effects. *arXiv:2502.11668* (see also arXiv:2502.14405).
