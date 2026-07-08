@@ -39,9 +39,9 @@ def test_all_component_gradients_nonzero():
     loss = ((y - target) ** 2).mean()
     loss.backward()
 
-    # Physics parameters.
-    assert model.physics._R_eff.grad is not None and model.physics._R_eff.grad.abs() > 0
-    assert model.physics.C1.grad is not None and model.physics.C1.grad.abs() > 0
+    # Physics parameters (positive ones are learned in log space).
+    assert model.physics._log_R_eff.grad is not None and model.physics._log_R_eff.grad.abs() > 0
+    assert model.physics._log_C1.grad is not None and model.physics._log_C1.grad.abs() > 0
     assert model.physics.V_oc.grad is not None and model.physics.V_oc.grad.abs() > 0
 
     # Coupling network parameters.
@@ -83,7 +83,7 @@ def test_scripted_path_still_trains():
     y = model(x)
     ((y - target) ** 2).mean().backward()
     # Gradients still reach the physics parameters through the scripted loop.
-    assert model.physics._R_eff.grad is not None and model.physics._R_eff.grad.abs() > 0
+    assert model.physics._log_R_eff.grad is not None and model.physics._log_R_eff.grad.abs() > 0
     assert sum(
         p.grad.abs().sum() for p in model.coupling.parameters() if p.grad is not None
     ) > 0

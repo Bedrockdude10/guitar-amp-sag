@@ -30,6 +30,38 @@ ArrayLike = Union[np.ndarray, torch.Tensor]
 Recording = Tuple[ArrayLike, ArrayLike]
 
 
+def chronological_split(
+    input_audio: ArrayLike,
+    target_audio: ArrayLike,
+    val_frac: float = 0.1,
+    test_frac: float = 0.1,
+) -> Tuple[Recording, Recording, Recording]:
+    """Split a recording into (train, val, test) *by time*, not randomly.
+
+    Audio modelling data must be split chronologically: a random split would
+    leak near-identical neighbouring samples across the split boundary and
+    inflate the validation score.  Returns three ``(input, target)`` pairs; the
+    train portion comes first, then val, then test.
+    """
+    if not 0.0 <= val_frac < 1.0 or not 0.0 <= test_frac < 1.0:
+        raise ValueError("fractions must be in [0, 1)")
+    if val_frac + test_frac >= 1.0:
+        raise ValueError("val_frac + test_frac must be < 1")
+
+    x = to_mono_tensor(input_audio)
+    t = to_mono_tensor(target_audio)
+    n = min(len(x), len(t))
+    x, t = x[:n], t[:n]
+
+    n_test = int(round(n * test_frac))
+    n_val = int(round(n * val_frac))
+    n_train = n - n_val - n_test
+    train = (x[:n_train], t[:n_train])
+    val = (x[n_train : n_train + n_val], t[n_train : n_train + n_val])
+    test = (x[n_train + n_val :], t[n_train + n_val :])
+    return train, val, test
+
+
 class AudioDataset(Dataset):
     """A single paired (input, target) recording, normalised to ``[-1, 1]``.
 
@@ -85,6 +117,12 @@ class SequenceDataset(Dataset):
     recordings:
         Optional list of ``(input, target)`` pairs for multi-recording training.
         Takes precedence over ``input_audio`` / ``target_audio``.
+    measured_vb:
+        Optional directly-measured ``V_B+`` signal (e.g. from a buffered B+
+        probe), same length as the single recording.  When present, its
+        per-segment slices are available via :meth:`measured_vb_segment` and can
+        be used for supervised training of the supply state -- turning the hard
+        latent-variable problem into direct regression.  Not normalised.
     """
 
     def __init__(
@@ -96,6 +134,7 @@ class SequenceDataset(Dataset):
         normalize: bool = True,
         drop_last: bool = True,
         recordings: Optional[Sequence[Recording]] = None,
+        measured_vb: Optional[ArrayLike] = None,
     ) -> None:
         self.segment_len = int(segment_len)
         self.V_idle = float(V_idle)
@@ -106,9 +145,14 @@ class SequenceDataset(Dataset):
                     "provide either (input_audio, target_audio) or recordings"
                 )
             recordings = [(input_audio, target_audio)]
+        if measured_vb is not None and len(recordings) != 1:
+            raise ValueError("measured_vb is only supported for a single recording")
+
+        vb_full = to_mono_tensor(measured_vb) if measured_vb is not None else None
 
         self.input_segments: List[torch.Tensor] = []
         self.target_segments: List[torch.Tensor] = []
+        self.measured_vb_segments: List[Optional[torch.Tensor]] = []
         # recording_of[i] -> which recording global segment i belongs to;
         # sequences[r]     -> ordered global segment indices of recording r.
         self.recording_of: List[int] = []
@@ -125,20 +169,28 @@ class SequenceDataset(Dataset):
 
             seq: List[int] = []
             for start in range(0, n, self.segment_len):
-                xs, ts = x[start : start + self.segment_len], t[start : start + self.segment_len]
+                end = start + self.segment_len
+                xs, ts = x[start:end], t[start:end]
+                vs = vb_full[start:end] if vb_full is not None else None
                 if len(xs) < self.segment_len:
                     if drop_last:
                         break
                     pad = self.segment_len - len(xs)
                     xs = torch.nn.functional.pad(xs, (0, pad))
                     ts = torch.nn.functional.pad(ts, (0, pad))
+                    if vs is not None:
+                        vs = torch.nn.functional.pad(vs, (0, pad))
                 global_idx = len(self.input_segments)
                 self.input_segments.append(xs.unsqueeze(-1))
                 self.target_segments.append(ts.unsqueeze(-1))
+                self.measured_vb_segments.append(
+                    vs.unsqueeze(-1) if vs is not None else None
+                )
                 self.recording_of.append(rec_id)
                 seq.append(global_idx)
             self.sequences.append(seq)
 
+        self.has_measured_vb = vb_full is not None
         # Per-segment initial supply state; first segment of each recording idles.
         self.initial_states: List[torch.Tensor] = [
             torch.tensor(self.V_idle, dtype=torch.float32)
@@ -154,6 +206,13 @@ class SequenceDataset(Dataset):
             self.target_segments[idx],
             self.initial_states[idx],
         )
+
+    def measured_vb_segment(self, idx: int) -> Optional[torch.Tensor]:
+        """Return the measured ``V_B+`` slice for segment ``idx`` (or ``None``).
+
+        Shape ``(segment_len, 1)`` when a B+ probe signal was provided.
+        """
+        return self.measured_vb_segments[idx]
 
     def update_state(self, idx: int, V_terminal: Union[float, torch.Tensor]) -> None:
         """Carry segment ``idx``'s terminal ``V_B+`` to the next segment.

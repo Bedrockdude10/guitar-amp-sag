@@ -33,8 +33,9 @@ root, so `from power_sag import PowerSagModel` works regardless of layout.
 ```
 src/power_sag/
   config.py            load_config (reads configs/*.yaml)
-  utils.py             shared audio I/O, normalisation, supply-voltage scaling
+  utils.py             audio I/O, normalisation, supply scaling, time-alignment
   losses.py            ESRLoss, PreEmphasisLoss
+  synthetic.py         SyntheticSagAmp — known-physics ground truth generator
   physics/
     ode.py             PowerSupplyODE — differentiable Euler ODE + GZ34 R_eff
   nn/
@@ -43,14 +44,16 @@ src/power_sag/
     audio_model.py     PowerSagLSTM — LSTM audio path, FiLM-conditioned on V_B+
     recurrence.py      SupplyRecurrence — TorchScript-able coupling+physics loop
     model.py           PowerSagModel — full end-to-end coupled model
+    baselines.py       UnconditionedLSTM, ConditionedLSTMNoPhysics (ablations)
   data/
-    datasets.py        AudioDataset, SequenceDataset, SequenceBatchSampler
+    datasets.py        AudioDataset, SequenceDataset, SequenceBatchSampler,
+                       chronological_split
   dsp/
     cabinet.py         CabinetIR — fixed (non-trainable) speaker/mic convolution
   evaluation/
-    evaluator.py       SagEvaluator — sag test signals + recovery-curve fitting
+    evaluator.py       SagEvaluator — signals, recovery fitting, 4-part protocol
 configs/default.yaml   all hyperparameters (Deluxe Reverb AB763 defaults)
-scripts/               train.py, capture.py, evaluate.py
+scripts/               train.py, capture.py, evaluate.py, validate_synthetic.py
 tests/                 pytest suite covering every mathematical invariant
 .github/workflows/     ci.yml — runs pytest on push / PR
 ```
@@ -112,9 +115,59 @@ and the evaluator's signals run end-to-end.
 
 ```bash
 python scripts/capture.py  --out capture_di.wav --minutes 3
-python scripts/train.py    --input capture_di.wav --target amp_out.wav --out model.pt
+python scripts/train.py    --input capture_di.wav --target amp_out.wav \
+    --out model.pt --log metrics.csv          # chronological split, best-val ckpt
+python scripts/train.py    ... --resume model.pt             # resume training
 python scripts/evaluate.py --checkpoint model.pt
 ```
+
+`train.py` splits the recording chronologically (train/val/test), shuffles only
+at the recording level, uses truncated BPTT, saves the best-on-validation
+checkpoint, logs metrics to CSV, and resumes. When a B+ probe signal is
+available, `SequenceDataset(..., measured_vb=...)` exposes per-segment `V_B+` for
+supervised training of the supply state.
+
+## Before data collection: synthetic identifiability
+
+Run the core de-risking experiment with **no hardware** — fit the model to data
+from a known ODE + coupling + sag nonlinearity and measure what it recovers:
+
+```bash
+python scripts/validate_synthetic.py --steps 400 --duration 2.0    # audio-only
+python scripts/validate_synthetic.py ... --supervise-vb 5.0        # + B+ probe
+```
+
+What this surfaced (and why it was worth running first):
+
+1. **The physics was untrainable as first parameterised.** Raw `C1 (~2e-5)` and
+   `R_eff (~3e2)` differ by orders of magnitude; Adam's ~`lr` steps blew up the
+   capacitance and froze the resistance. Fixed by learning **log-parameters**
+   (`PowerSupplyODE` now stores `log C1`, `log R_eff`, …). After the fix the fit
+   is stable and drives ESR down to ~5e-3, and the recovered latent `V_B+`
+   correlates ~0.8 with ground truth.
+2. **Individual physics parameters are not identifiable from audio alone.** Even
+   at near-zero ESR, `R_eff` and `C1` settle far from truth — the flexible audio
+   path compensates, and a free coupling current trades off against `R_eff`/`C1`
+   (only the trajectory and the time constant are constrained). Supervising
+   `V_B+` (the B+ probe) improves the trajectory but not the individual
+   parameters. **Implication for capture:** pin `C1` from the schematic and/or
+   constrain the coupling if physical parameter recovery is a goal; otherwise
+   treat `V_B+` as a recovered *trajectory*, not a set of identified constants.
+
+## Baselines and the sag protocol
+
+`nn.UnconditionedLSTM` (black-box, no sag) and `nn.ConditionedLSTMNoPhysics`
+(learned slow state instead of the ODE — the physics ablation) share the
+`model(x) -> y` convention. `SagEvaluator.run_protocol(model)` runs the four
+sag-targeted tests (attack/bloom, recovery time constant, pre-sagged vs cold
+attack, quiet-to-loud) on any of them for a fair comparison.
+
+## Capture readiness
+
+`utils.align_signals(di, amp, max_lag)` compensates DI↔output latency by
+cross-correlation before datasets are built — misaligned pairs make ESR
+meaningless. `data.chronological_split` produces the time-ordered train/val/test
+partitions.
 
 ## Physics
 

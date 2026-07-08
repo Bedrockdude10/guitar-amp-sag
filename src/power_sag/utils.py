@@ -8,7 +8,7 @@ supply-voltage normalisation shared by the coupling and audio-path networks.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -58,3 +58,48 @@ def normalize_supply(V: torch.Tensor, V_idle: float, delta_V: float) -> torch.Te
     network and the FiLM conditioning in the audio path.
     """
     return (V - V_idle) / delta_V
+
+
+def estimate_delay(
+    reference: AudioSource, delayed: AudioSource, max_lag: Optional[int] = None
+) -> int:
+    """Estimate the integer sample delay of ``delayed`` relative to ``reference``.
+
+    Returns ``d`` such that ``delayed[n] ~= reference[n - d]`` (positive ``d``
+    means ``delayed`` lags).  Uses FFT cross-correlation of the two (mean-
+    removed) signals; ``max_lag`` restricts the search window.
+    """
+    from scipy.signal import correlate, correlation_lags
+
+    x = load_audio(reference).numpy().astype(np.float64)
+    y = load_audio(delayed).numpy().astype(np.float64)
+    x = x - x.mean()
+    y = y - y.mean()
+    corr = correlate(y, x, mode="full", method="fft")
+    lags = correlation_lags(len(y), len(x), mode="full")
+    if max_lag is not None:
+        keep = np.abs(lags) <= int(max_lag)
+        corr, lags = corr[keep], lags[keep]
+    return int(lags[int(np.argmax(corr))])
+
+
+def align_signals(
+    input_audio: AudioSource,
+    target_audio: AudioSource,
+    max_lag: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, int]:
+    """Time-align a DI/target pair by compensating their latency.
+
+    Returns ``(aligned_input, aligned_target, delay)`` as equal-length 1-D
+    tensors.  Misaligned DI/output pairs make the ESR loss meaningless, so this
+    should be run on captured data before building datasets.
+    """
+    x = load_audio(input_audio)
+    t = load_audio(target_audio)
+    delay = estimate_delay(x, t, max_lag=max_lag)
+    if delay > 0:  # target lags: drop its leading samples
+        t = t[delay:]
+    elif delay < 0:  # input lags: drop its leading samples
+        x = x[-delay:]
+    n = min(len(x), len(t))
+    return x[:n], t[:n], delay

@@ -70,6 +70,18 @@ class PowerSupplyODE(nn.Module):
     learn_R_eff, learn_C1, learn_V_oc:
         Whether the corresponding physical parameter is a learnable
         ``nn.Parameter`` (``True``) or a fixed buffer (``False``).
+
+    Notes
+    -----
+    The strictly-positive parameters (``C1``, ``R_eff``/``R0``/``R1``) are stored
+    and learned in **log space**.  Their physical values span many orders of
+    magnitude (``C1 ~ 2e-5`` F, ``R_eff ~ 3e2`` ohm), and an optimiser like Adam
+    takes steps of roughly ``lr`` in raw parameter units regardless of scale --
+    which blows up the tiny capacitance while barely moving the large
+    resistance.  Learning ``log C1`` etc. puts every parameter on an ``O(1)``,
+    multiplicative footing (and guarantees positivity for free).  The physical
+    values remain available through the ``C1``, ``R_eff``, ``R0``, ``R1``
+    properties, so callers and the ODE math are unchanged.
     """
 
     def __init__(
@@ -96,29 +108,54 @@ class PowerSupplyODE(nn.Module):
         self.reff_mode = reff_mode
         self.V_idle = float(V_idle)
 
-        self._register("C1", C1, learn_C1)
-        self._register("V_oc", V_oc, learn_V_oc)
+        # Positive parameters learned in log space (see class docstring).
+        self._register_log("_log_C1", C1, learn_C1)
+        self._register_raw("V_oc", V_oc, learn_V_oc)
 
         if reff_mode == "scalar":
-            self._register("_R_eff", R_eff, learn_R_eff)
+            self._register_log("_log_R_eff", R_eff, learn_R_eff)
         else:
-            self._register("R0", R0, learn_R_eff)
-            self._register("R1", R1, learn_R_eff)
-            self._register("k", k, learn_R_eff)
+            self._register_log("_log_R0", R0, learn_R_eff)
+            self._register_log("_log_R1", R1, learn_R_eff)
+            self._register_raw("k", k, learn_R_eff)
 
     # ------------------------------------------------------------------ utils
-    def _register(self, name: str, value: float, learnable: bool) -> None:
+    def _register_raw(self, name: str, value: float, learnable: bool) -> None:
         tensor = torch.tensor(float(value), dtype=torch.float32)
         if learnable:
             self.register_parameter(name, nn.Parameter(tensor))
         else:
             self.register_buffer(name, tensor)
 
+    def _register_log(self, name: str, value: float, learnable: bool) -> None:
+        tensor = torch.log(torch.tensor(float(value), dtype=torch.float32))
+        if learnable:
+            self.register_parameter(name, nn.Parameter(tensor))
+        else:
+            self.register_buffer(name, tensor)
+
+    # Physical values recovered from their log-space parameters.
+    @property
+    def C1(self) -> torch.Tensor:
+        return torch.exp(self._log_C1)
+
+    @property
+    def _R_eff(self) -> torch.Tensor:  # scalar mode
+        return torch.exp(self._log_R_eff)
+
+    @property
+    def R0(self) -> torch.Tensor:
+        return torch.exp(self._log_R0)
+
+    @property
+    def R1(self) -> torch.Tensor:
+        return torch.exp(self._log_R1)
+
     @property
     def tau(self) -> torch.Tensor:
         """Nominal recovery time constant ``tau = R_eff * C1`` (seconds)."""
         r = self._R_eff if self.reff_mode == "scalar" else self.R0
-        return r.detach() * self.C1.detach()
+        return (r * self.C1).detach()
 
     @property
     def step_ratio(self) -> float:

@@ -26,6 +26,8 @@ __all__ = [
     "FiLMLayer",
     "PowerSagLSTM",
     "PowerSagModel",
+    "UnconditionedLSTM",
+    "ConditionedLSTMNoPhysics",
     "ESRLoss",
     "PreEmphasisLoss",
     "AudioDataset",
@@ -33,6 +35,7 @@ __all__ = [
     "SequenceBatchSampler",
     "CabinetIR",
     "SagEvaluator",
+    "SyntheticSagAmp",
 ]
 
 # Maps public name -> submodule providing it (kept lazy so ``import power_sag``
@@ -43,6 +46,8 @@ _EXPORTS = {
     "FiLMLayer": "nn",
     "PowerSagLSTM": "nn",
     "PowerSagModel": "nn",
+    "UnconditionedLSTM": "nn",
+    "ConditionedLSTMNoPhysics": "nn",
     "ESRLoss": "losses",
     "PreEmphasisLoss": "losses",
     "AudioDataset": "data",
@@ -50,6 +55,7 @@ _EXPORTS = {
     "SequenceBatchSampler": "data",
     "CabinetIR": "dsp",
     "SagEvaluator": "evaluation",
+    "SyntheticSagAmp": "synthetic",
 }
 
 

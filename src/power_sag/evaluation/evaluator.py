@@ -8,11 +8,15 @@ provides curve-fitting utilities to measure recovery time constants.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from scipy.optimize import curve_fit
+
+# A model under test: maps input (1, T, 1) to output (1, T, 1).
+ModelFn = Callable[[torch.Tensor], torch.Tensor]
 
 
 def _decay_model(t: np.ndarray, A: float, tau: float, C: float) -> np.ndarray:
@@ -110,3 +114,95 @@ class SagEvaluator:
         )
         tau = abs(float(params[1]))
         return tau
+
+    def rms_envelope(self, signal: torch.Tensor, win_ms: float = 10.0) -> torch.Tensor:
+        """Sliding-window RMS envelope of a signal (shape preserved, 1-D out)."""
+        win = max(int(win_ms * 1e-3 * self.fs), 1)
+        x = signal.detach().reshape(1, 1, -1)
+        power = x ** 2
+        kernel = torch.ones(1, 1, win, dtype=power.dtype) / win
+        padded = F.pad(power, (win - 1, 0))
+        return torch.sqrt(F.conv1d(padded, kernel).reshape(-1) + 1e-12)
+
+    @staticmethod
+    def _run(model: ModelFn, x: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            return model(x)
+
+    # ----------------------------------------------------- sag-targeted tests
+    def attack_bloom(
+        self, model: ModelFn, duration: float = 1.0, amplitude: float = 0.9
+    ) -> Dict[str, float]:
+        """Test 1 -- sustained-chord attack/bloom shape.
+
+        Returns the peak attack RMS, the settled (steady-state) RMS, and their
+        ratio.  A sagging amp softens the attack and settles lower, so
+        ``settle/attack < 1``.
+        """
+        x = self.sustained_chord_signal(duration, amplitude=amplitude)
+        env = self.rms_envelope(self._run(model, x))
+        attack = float(env[: env.numel() // 10].max())
+        settle = float(env[-env.numel() // 10 :].mean())
+        return {"attack_rms": attack, "settle_rms": settle,
+                "settle_over_attack": settle / (attack + 1e-9)}
+
+    def recovery_time_constant(
+        self, model: ModelFn, loud: float = 0.5, quiet: float = 1.0
+    ) -> float:
+        """Test 2 -- dynamic recovery time constant.
+
+        Drive loud then quiet and fit the exponential recovery of the output
+        RMS envelope in the quiet region.  Returns ``tau`` in seconds.
+        """
+        x = self.dynamic_signal(loud, quiet, loud_amp=0.9, quiet_amp=0.05)
+        env = self.rms_envelope(self._run(model, x))
+        start = int(loud * self.fs)
+        return self.fit_recovery_curve(env[start:], fs=self.fs)
+
+    def presag_vs_cold_attack(
+        self, model: ModelFn, note: float = 0.2, prime: float = 0.8
+    ) -> Dict[str, float]:
+        """Test 3 -- pre-sagged vs cold-supply attack.
+
+        Compare a note's attack peak when played (a) cold, after silence, and
+        (b) pre-sagged, right after a loud sustain.  A sagging amp compresses
+        the pre-sagged attack, so ``presag/cold < 1``.
+        """
+        n_note = int(note * self.fs)
+        cold = torch.cat(
+            [torch.zeros(1, int(prime * self.fs), 1),
+             self.sustained_chord_signal(note, amplitude=0.6)], dim=1)
+        primed = torch.cat(
+            [self.sustained_chord_signal(prime, amplitude=0.9),
+             self.sustained_chord_signal(note, amplitude=0.6)], dim=1)
+
+        cold_env = self.rms_envelope(self._run(model, cold))[-n_note:]
+        primed_env = self.rms_envelope(self._run(model, primed))[-n_note:]
+        cold_peak = float(cold_env.max())
+        presag_peak = float(primed_env.max())
+        return {"cold_attack": cold_peak, "presag_attack": presag_peak,
+                "presag_over_cold": presag_peak / (cold_peak + 1e-9)}
+
+    def quiet_to_loud_response(
+        self, model: ModelFn, quiet: float = 0.5, loud: float = 0.5
+    ) -> Dict[str, float]:
+        """Test 4 -- quiet-to-loud transition (supply "stiffening")."""
+        x = torch.cat(
+            [self.sustained_chord_signal(quiet, amplitude=0.1),
+             self.sustained_chord_signal(loud, amplitude=0.9)], dim=1)
+        env = self.rms_envelope(self._run(model, x))
+        n_loud = int(loud * self.fs)
+        loud_env = env[-n_loud:]
+        peak = float(loud_env.max())
+        settle = float(loud_env[-loud_env.numel() // 5 :].mean())
+        return {"loud_peak": peak, "loud_settle": settle,
+                "settle_over_peak": settle / (peak + 1e-9)}
+
+    def run_protocol(self, model: ModelFn) -> Dict[str, Dict[str, float]]:
+        """Run the full 4-part sag protocol; return all measurements."""
+        return {
+            "attack_bloom": self.attack_bloom(model),
+            "recovery_tau": {"tau_s": self.recovery_time_constant(model)},
+            "presag_vs_cold": self.presag_vs_cold_attack(model),
+            "quiet_to_loud": self.quiet_to_loud_response(model),
+        }

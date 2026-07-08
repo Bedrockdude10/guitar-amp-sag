@@ -66,8 +66,9 @@ def test_backward_produces_nonzero_gradients():
     V_seq, V_final = ode(I)
     loss = ((V_seq - 400.0) ** 2).mean()
     loss.backward()
-    assert ode._R_eff.grad is not None and ode._R_eff.grad.abs() > 0
-    assert ode.C1.grad is not None and ode.C1.grad.abs() > 0
+    # Positive params are learned in log space; check those leaf gradients.
+    assert ode._log_R_eff.grad is not None and ode._log_R_eff.grad.abs() > 0
+    assert ode._log_C1.grad is not None and ode._log_C1.grad.abs() > 0
 
 
 def test_time_constant_matches_rc():
