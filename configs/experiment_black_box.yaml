@@ -1,0 +1,4 @@
+# Baseline: standard black-box LSTM, no supply awareness.
+defaults: default.yaml
+model: black_box
+seed: 0

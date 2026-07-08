@@ -42,7 +42,8 @@ live in `physics/ode.py`.
 ## Quickstart
 
 ```bash
-pip install -e ".[dev]"     # torch, numpy, scipy, soundfile, pyyaml, pytest
+pip install -e ".[dev]"     # core + pytest + matplotlib (runs the full suite)
+pip install -e ".[viz]"      # core + matplotlib only (for figures)
 pytest tests/ -v
 ```
 
@@ -85,8 +86,13 @@ src/power_sag/
                        chronological_split
   dsp/cabinet.py       CabinetIR — fixed (non-trainable) speaker/mic convolution
   evaluation/evaluator.py  SagEvaluator — signals, recovery fitting, 4-part protocol
+  reporting/
+    metrics.py         pure, range-checked metrics (ESR, SNR, correlation, sag …)
+    report.py          schema'd JSON reports (regression + trajectory + protocol)
+    plots.py           publication figures (colourblind-safe, no dual-axis)
+    style.py           Okabe-Ito palette + recessive matplotlib style
 configs/default.yaml   all hyperparameters (Deluxe Reverb AB763 defaults)
-scripts/               capture, train, evaluate, validate_synthetic
+scripts/               capture, train, evaluate, validate_synthetic, report
 tests/                 pytest suite (per-module invariants + integration)
 ```
 
@@ -120,6 +126,10 @@ cited source, and pinned by a test. Read the code for the authoritative version.
   unchanged. Mixed precision is deliberately **not** applied to the ODE: float16
   can't resolve ~0.01 V changes on a ~415 V rail across tens of thousands of
   Euler steps.
+- **Cost (measured, real `segment_len=24000`).** One segment (batch 4,
+  fwd+bwd, truncated BPTT) is ~19 s eager / ~11 s scripted on CPU; peak RSS
+  ≈ 820 MB. Truncated BPTT keeps memory flat, so a 3-minute recording is
+  ~16 min/epoch on CPU — **real training needs a GPU, but memory does not.**
 
 ## Findings: synthetic identifiability
 
@@ -146,6 +156,48 @@ slow state instead of the ODE — the physics ablation) share the `model(x) -> y
 convention. `SagEvaluator.run_protocol(model)` runs the four sag-targeted tests
 (attack/bloom, recovery time constant, pre-sagged vs cold attack, quiet-to-loud)
 on any model for a fair comparison. Standard ESR alone does not expose sag.
+
+All three share one forward signature `(x, V0, state, return_state)`, so the
+training loop is model-agnostic. Select a model declaratively with the `model:`
+config field via `nn.build_model`, and run the planned comparison from the
+provided experiment configs:
+
+```bash
+python scripts/train.py --config configs/experiment_physics.yaml    --input di.wav --target amp.wav --out physics.pt
+python scripts/train.py --config configs/experiment_no_physics.yaml --input di.wav --target amp.wav --out no_physics.pt
+python scripts/train.py --config configs/experiment_black_box.yaml  --input di.wav --target amp.wav --out black_box.pt
+```
+
+## Reproducibility
+
+- **Seeded runs.** `seed_everything(seed)` seeds Python/NumPy/PyTorch; `train.py`
+  reads `seed` from config so a run reproduces.
+- **Config inheritance.** A config may set `defaults: default.yaml` and restate
+  only what differs (`load_config` deep-merges), so the experiment configs above
+  can't drift from the shared hyperparameters.
+- **Numerical validation.** `tests/test_integrator.py` establishes the
+  discretisation is sound — the Euler trajectory matches the analytic RC
+  solution to <0.1% of the swing at 48 kHz, exhibits first-order error scaling,
+  and agrees with an RK4 reference — the evidence behind draft §3.3.
+
+## Reporting and figures
+
+`python scripts/report.py --checkpoint model.pt --log metrics.csv --outdir report/`
+writes a schema'd `report.json` (regression + supply-trajectory + sag-protocol
+metrics) and publication PNGs (output overlay, output+B+ stacked, recovery-curve
+fit, training curves).
+
+The layer is split so it can be **test-infected**: `reporting/metrics.py` is
+pure functions with *known ranges* — ESR ∈ [0, ∞) and 0 iff equal, correlation
+∈ [-1, 1], RMSE ≥ MAE, SNR → ∞ for a perfect fit, sag depth ≥ 0 — and on
+`SyntheticSagAmp` ground truth the values are pinned to the physically-known
+answers. `tests/test_metrics.py` / `test_report.py` assert those ranges and the
+report schema; `tests/test_plots.py` renders every figure on the `Agg` backend
+and checks structure (e.g. the output/B+ figure has two stacked axes, never a
+dual y-scale). So "is this report well-formed?" is a test, not a judgement call.
+
+Figures use the Okabe-Ito colourblind-safe palette in fixed order and never use
+a dual y-axis (differing units go in stacked subplots sharing the time axis).
 
 ## Where the documentation lives
 

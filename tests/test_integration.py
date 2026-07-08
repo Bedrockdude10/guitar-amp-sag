@@ -24,6 +24,7 @@ from power_sag.dsp import CabinetIR
 from power_sag.evaluation import SagEvaluator
 from power_sag.losses import ESRLoss, PreEmphasisLoss
 from power_sag.nn import PowerSagModel
+from power_sag.nn import build_model as build_model_from_config
 
 
 def _load_train_module():
@@ -235,6 +236,26 @@ def test_train_segment_truncates_bptt_and_learns():
         )
         losses.append(loss)
     assert losses[-1] < losses[0]
+
+
+def test_train_segment_is_model_agnostic():
+    """The training step drives all three model types through one code path."""
+    train = _load_train_module()
+    cfg = small_config(seg_len=48)
+    esr, preemph = ESRLoss(), PreEmphasisLoss(coeff=cfg["preemph_coeff"])
+    torch.manual_seed(0)
+    inp, tgt = 0.5 * torch.randn(1, 48, 1), 0.5 * torch.randn(1, 48, 1)
+
+    for kind in ("physics", "no_physics", "black_box"):
+        cfg["model"] = kind
+        model = build_model_from_config(cfg)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-2)
+        loss, V_final = train.train_segment(
+            model, opt, inp, tgt, torch.full((1, 1), 415.0), 16, esr, preemph, 1.0
+        )
+        assert loss >= 0.0 and torch.isfinite(torch.tensor(loss))
+        # Only the physics model produces a supply state to carry forward.
+        assert (V_final is None) == (kind != "physics")
 
 
 def test_sampler_driven_stateful_loop_carries_state_per_lane():

@@ -24,7 +24,11 @@ from .film import FiLMLayer
 
 
 class UnconditionedLSTM(nn.Module):
-    """Standard black-box LSTM amplifier model (no supply conditioning)."""
+    """Standard black-box LSTM amplifier model (no supply conditioning).
+
+    Shares the model-agnostic forward signature ``(x, V0, state, return_state)``;
+    ``V0`` is accepted and ignored (there is no supply state).
+    """
 
     def __init__(
         self, hidden_size: int = 32, num_layers: int = 1, input_size: int = 1
@@ -34,10 +38,17 @@ class UnconditionedLSTM(nn.Module):
         self.output = nn.Linear(hidden_size, 1)
 
     def forward(
-        self, x: torch.Tensor, state: Optional[LSTMState] = None
-    ) -> torch.Tensor:
-        h, _ = self.lstm(x, state)
-        return self.output(h)
+        self,
+        x: torch.Tensor,
+        V0: Optional[torch.Tensor] = None,
+        state: Optional[LSTMState] = None,
+        return_state: bool = False,
+    ):
+        h, state = self.lstm(x, state)
+        y = self.output(h)
+        if return_state:
+            return y, None, state  # (output, V_final=None, recurrent state)
+        return y
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "UnconditionedLSTM":
@@ -66,12 +77,22 @@ class ConditionedLSTMNoPhysics(nn.Module):
         self.film = FiLMLayer(hidden_size, cond_dim=1)
         self.output = nn.Linear(hidden_size, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        slow, _ = self.state_gru(x)
+    def forward(
+        self,
+        x: torch.Tensor,
+        V0: Optional[torch.Tensor] = None,
+        state: Optional[tuple] = None,
+        return_state: bool = False,
+    ):
+        gru_state, lstm_state = (state if state is not None else (None, None))
+        slow, gru_state = self.state_gru(x, gru_state)
         latent = self.state_proj(slow)  # (batch, seq_len, 1) learned slow state
-        h, _ = self.lstm(x)
+        h, lstm_state = self.lstm(x, lstm_state)
         h = self.film(h, latent)
-        return self.output(h)
+        y = self.output(h)
+        if return_state:
+            return y, None, (gru_state, lstm_state)
+        return y
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "ConditionedLSTMNoPhysics":

@@ -43,8 +43,13 @@ from power_sag.data import (  # noqa: E402
 )
 from power_sag.dsp import CabinetIR  # noqa: E402
 from power_sag.losses import ESRLoss, PreEmphasisLoss  # noqa: E402
-from power_sag.nn import PowerSagModel  # noqa: E402
-from power_sag.utils import configure_backends, resolve_device  # noqa: E402
+from power_sag.nn import build_model  # noqa: E402
+from power_sag.utils import (  # noqa: E402
+    configure_backends,
+    detach_state,
+    resolve_device,
+    seed_everything,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,43 +65,46 @@ def parse_args() -> argparse.Namespace:
 
 
 def train_segment(
-    model: PowerSagModel,
+    model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     inp: torch.Tensor,
     tgt: torch.Tensor,
-    V0: torch.Tensor,
+    V0: Optional[torch.Tensor],
     tbptt: Optional[int],
     esr: ESRLoss,
     preemph: PreEmphasisLoss,
     lam: float,
-) -> Tuple[float, torch.Tensor]:
-    """Run truncated BPTT over one segment; return (mean loss, terminal V_B+)."""
+) -> Tuple[float, Optional[torch.Tensor]]:
+    """Run truncated BPTT over one segment; return (mean loss, terminal V_B+).
+
+    Model-agnostic: works for the physics model (supply state ``V`` carried) and
+    the black-box baselines (``V`` is ``None``); the recurrent ``state`` and
+    ``V`` are detached at each chunk boundary to truncate BPTT.
+    """
     length = inp.shape[1]
     chunk = tbptt or length
     V = V0
-    lstm_state = None
+    state = None
     weighted_loss = 0.0
 
     for start in range(0, length, chunk):
         end = min(start + chunk, length)
         optimizer.zero_grad()
-        y, V, lstm_state = model(
-            inp[:, start:end], V0=V, lstm_state=lstm_state, return_state=True
-        )
+        y, V, state = model(inp[:, start:end], V0=V, state=state, return_state=True)
         loss = esr(y, tgt[:, start:end]) + lam * preemph(y, tgt[:, start:end])
         loss.backward()
         optimizer.step()
         # Truncate BPTT at the chunk boundary: keep the state, drop the graph.
-        V = V.detach()
-        lstm_state = tuple(h.detach() for h in lstm_state)
+        V = detach_state(V)
+        state = detach_state(state)
         weighted_loss += loss.item() * (end - start)
 
-    return weighted_loss / length, V.detach()
+    return weighted_loss / length, detach_state(V)
 
 
 @torch.no_grad()
 def evaluate(
-    model: PowerSagModel,
+    model: torch.nn.Module,
     dataset: SequenceDataset,
     esr: ESRLoss,
     preemph: PreEmphasisLoss,
@@ -112,7 +120,8 @@ def evaluate(
         inp, tgt = inp.unsqueeze(0).to(device), tgt.unsqueeze(0).to(device)
         y, V_final, _ = model(inp, V0=V0.view(1, 1).to(device), return_state=True)
         total += (esr(y, tgt) + lam * preemph(y, tgt)).item()
-        dataset.update_state(idx, V_final)
+        if V_final is not None:  # baselines have no supply state to carry
+            dataset.update_state(idx, V_final)
         n += 1
     model.train()
     return total / max(n, 1)
@@ -121,9 +130,10 @@ def evaluate(
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
+    seed_everything(cfg.get("seed", 0))
     device = resolve_device(args.device)
     configure_backends(device)
-    print(f"device: {device}")
+    print(f"device: {device}  model: {cfg.get('model', 'physics')}  seed: {cfg.get('seed', 0)}")
 
     import soundfile as sf
 
@@ -142,9 +152,9 @@ def main() -> None:
     if cfg.get("cabinet_ir"):
         cabinet = CabinetIR(cfg["cabinet_ir"]).to(device)
 
-    model = PowerSagModel.from_config(cfg, cabinet=cabinet).to(device)
-    if cfg.get("use_script"):
-        model.enable_script()  # after .to(device): the scripted recurrence shares params
+    model = build_model(cfg, cabinet=cabinet).to(device)
+    if cfg.get("use_script") and hasattr(model, "enable_script"):
+        model.enable_script()  # physics model only; after .to(device) (params shared)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     esr = ESRLoss()
@@ -182,8 +192,9 @@ def main() -> None:
             loss, V_final = train_segment(
                 model, optimizer, inp, tgt, V0, tbptt, esr, preemph, lam
             )
-            for b, idx in enumerate(batch_idx):
-                train_ds.update_state(idx, V_final[b])
+            if V_final is not None:  # carry supply state (physics model only)
+                for b, idx in enumerate(batch_idx):
+                    train_ds.update_state(idx, V_final[b])
             running += loss
             n_batches += 1
 

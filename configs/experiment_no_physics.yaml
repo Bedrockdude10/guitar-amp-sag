@@ -1,0 +1,4 @@
+# Ablation: same conditioned audio path, learned slow state instead of the ODE.
+defaults: default.yaml
+model: no_physics
+seed: 0
