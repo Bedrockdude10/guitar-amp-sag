@@ -404,7 +404,11 @@ If B+ is directly measured: add a direct V_B+ tracking error metric.
 
 ## Part II: Working Paper Draft
 
-*Status: Pre-experimental. Sections 1–4 are substantive drafts. Section 5 is a skeleton.*
+*Status: Pre-data. Sections 1–4 (method) and 5 (pre-registered protocol) are near-final and match
+the implemented, unit-tested code; §6.1 reports preliminary synthetic-validation results. Pending
+data collection: §6.2 (amplifier results), §7 discussion specifics, and the abstract's quantitative
+claims. Related work (§2 / §3.4 / §3.7) is drafted from a July-2026 literature review and marked
+pending against the full PDFs.*
 *Target venue: DAFx 2026 or ICASSP 2027 (depending on experimental timeline).*
 
 ---
@@ -627,6 +631,14 @@ accuracy of the explicit integration. The discretized ODE is fully differentiabl
 with respect to the learned parameters (φ, θ, and optionally η) backpropagate through the Euler
 steps via standard automatic differentiation, without requiring adjoint methods.
 
+**Numerical validation.** We verify the discretisation against references that require no measured
+data. For a constant load current the ODE is linear and admits the closed form
+V(t) = V_ss + (V₀ − V_ss)·exp(−t/RC) with V_ss = V_oc − I·R; at 48 kHz the explicit-Euler
+trajectory matches this analytic solution to within 0.1% of the voltage swing. The global error
+scales linearly with Ts (fitted order ≈ 1.0, as expected for explicit Euler), and the trajectory is
+indistinguishable (< 0.05 V) from a fourth-order Runge–Kutta reference at the audio rate. These
+checks are encoded as unit tests, so the accuracy claim is regression-guarded rather than asserted.
+
 ---
 
 ## 4. Architecture
@@ -659,8 +671,12 @@ Given a normalized supply voltage v[n] = (V_B+[n] - V_idle) / ΔV_max ∈ [-1, 1
 h_conditioned[n] = γ[n] ⊙ h[n]  +  β[n]
 ```
 
-FiLM is applied after each layer of the audio path network. The projection matrices W_γ, W_β
-are small (hidden_dim × 1) and add negligible parameter count.
+FiLM is applied to the hidden sequence of the audio path network before the output projection. The
+projection matrices W_γ, W_β are small (hidden_dim × 1) and add negligible parameter count. Their
+biases are initialised to b_γ = 1, b_β = 0, so that at the quiescent operating point (V_B+ = V_idle,
+hence v = 0) the layer is exactly the identity and does not attenuate the audio path at the start of
+training; the weights retain their standard non-zero initialisation so gradients still flow to V_B+
+from the first step.
 
 ### 4.3 Training Procedure
 
@@ -673,58 +689,144 @@ L = ESR(y[n], ŷ[n])  +  λ · L_preemph(y[n], ŷ[n])
 where ESR is the error-signal ratio [WRIGHT2020], L_preemph is a perceptual pre-emphasis loss
 (A-weighting filter, following Wright & Välimäki 2020), and λ is a tuned weight.
 
-Training uses segments of [500ms–1s] to ensure sag time constants are covered. The V_B+[n]
-state is carried across segment boundaries within each training sequence, re-initialized to
-V_idle at the start of each new sequence.
+Training uses 0.5 s segments (24 000 samples at 48 kHz) to cover several sag time constants. The
+V_B+ state is carried across segment boundaries within a recording and re-initialised to V_idle at
+the start of each recording. Because this carry makes ordering significant, batches are drawn with a
+sequence-level sampler that shuffles at the *recording* level and keeps each recording's segments in
+order (a naive per-segment shuffle would feed most segments a V_B+ initial condition from an
+unrelated segment); each parallel batch lane carries its own recording's state.
 
 **Training signal:** A purpose-designed capture signal comprising sustained power chords,
 high-gain single-note lines, and deliberate dynamic variation (forte to piano transitions and
 back) to systematically exercise the sag trajectory. This differs from standard NAM training
 signals, which do not exercise long-range dynamics.
 
+### 4.4 Parameterisation and optimisation
+
+Three implementation choices proved necessary for the gray-box model to train, and we report them
+because they are non-obvious consequences of coupling a stiff physical parameterisation to a neural
+optimiser.
+
+**Log-space physical parameters.** The physical parameters span orders of magnitude
+(C₁ ≈ 2×10⁻⁵ F, R_eff ≈ 3×10² Ω). A first-order optimiser such as Adam takes steps of roughly the
+learning rate in raw parameter units regardless of scale, which diverges the tiny capacitance while
+leaving the large resistance essentially frozen. We therefore learn log C₁, log R_eff (and the GZ34
+model's log R₀, log R₁), which places every parameter on an O(1) multiplicative footing and enforces
+positivity for free. This was identified by the synthetic study of §6.1, not anticipated.
+
+**Truncated backpropagation through time.** A 0.5 s segment unrolls ~24 000 Euler and LSTM steps.
+The carried V_B+ is detached at each segment boundary (state continuity without gradient continuity),
+and within a segment we detach the supply and recurrent state every N samples (default 2048),
+bounding the backprop graph. Empirically the sag time constants (~15 ms ≈ 720 samples) fit well
+within one truncation window, and peak memory stays flat (< 1 GB at batch 4) rather than growing
+with segment length.
+
+**Differentiable sample-rate recurrence.** The coupling→ODE recurrence is inherently sequential
+(each V_B+[n] feeds the coupling network for the next sample) and so cannot be vectorised across
+time; the per-sample Python dispatch dominates cost. We compile the recurrence with TorchScript,
+which reuses the eager coupling and Euler-step code verbatim (an equivalence test guards against
+drift), roughly halving CPU wall-clock with bit-identical results. The audio LSTM is already
+vectorised over time, and batch parallelism scales GPU utilisation.
+
+Optionally, when the B+ rail is instrumented with a buffered probe, a supervised term on the
+measured V_B+ can be added to the loss, converting the latent-state problem to direct regression on
+the supply trajectory (§6.1 quantifies its effect).
+
 ---
 
 ## 5. Experimental Setup
 
-*[To be completed after data collection and training implementation]*
+*This protocol is fixed in advance of data collection (pre-registration); the software that
+implements every model, metric, and test below is complete and unit-tested, so the amplifier
+experiments consist of running fixed code on the captured data. Only the bracketed items depend on
+the physical capture.*
 
 ### 5.1 Target Amplifier
 
 Fender Deluxe Reverb (DRRI, `65 Reissue), vibrato channel. [Confirm exact schematic version.]
-Power supply component values confirmed from schematic: V_oc = [TBD], C₁ = [TBD], R_eff = [TBD].
+Power supply component values from schematic: V_oc = [TBD], C₁ = [TBD], R_eff = [TBD] (defaults
+420 V / 22 µF / 300 Ω used until confirmed). Per the identifiability analysis (§6.1), C₁ is read
+from the schematic and held fixed rather than learned, since it is not jointly identifiable with
+R_eff and the coupling from audio alone.
 
 ### 5.2 Data Collection
 
-[TBD: describe capture procedure, training signal design, microphone setup, interface used.
-Note whether B+ probe was used for direct V_B+ measurement.]
+[TBD: capture procedure, microphone/interface, and whether the B+ rail is instrumented with a
+buffered probe for direct V_B+ measurement — see §6.1 for why the probe is recommended.] The DI and
+amp-output tracks are latency-aligned by cross-correlation before use (misaligned pairs make the ESR
+loss meaningless), and split chronologically into train/validation/test (default 80/10/10) — never a
+random split, which would leak neighbouring samples across the boundary.
 
 ### 5.3 Baseline Models
 
-- **NAM A2 (Deluxe Reverb):** Steven Atkinson's capture (Tone3000). Current state-of-the-art
+All baselines share the proposed model's audio-path capacity and its `(x, V0, state, return_state)`
+interface, so they are trained and evaluated by the identical pipeline (selected by a config field):
+
+- **NAM A2 (Deluxe Reverb):** Steven Atkinson's capture (Tone3000). External state-of-the-art
   black-box capture of the same amplifier.
-- **Conditioned LSTM (no physics):** Same audio path architecture as our model, with V_B+
-  replaced by an LSTM hidden state. Ablates the benefit of the physics ODE.
-- **Unconditioned LSTM:** Standard black-box LSTM (Wright et al. architecture). Ablates the
-  benefit of any power supply conditioning.
+- **Conditioned LSTM (no physics):** the proposed audio path, but the slow conditioning state is a
+  learned GRU latent rather than the physics ODE. Ablates the *physics* while retaining the
+  conditioning mechanism — isolating the value of the physical structure.
+- **Unconditioned LSTM:** standard black-box LSTM (Wright et al. architecture). Ablates any supply
+  conditioning.
 
 ### 5.4 Evaluation Protocol
 
-**Standard metrics:** ESR and perceptual pre-emphasis loss on a held-out test set of general
-guitar playing material.
+**Standard metrics** (implemented, each range-checked in tests): ESR, ESR in dB, MAE, RMSE, and
+segmental SNR on a held-out test set of general playing material, plus the pre-emphasised ESR.
 
-**Sag-targeted protocol:**
-1. Sustained chord attack/decay shape (RMS trajectory vs. ground truth)
-2. Dynamic recovery time constant (exponential fit to B+ recovery)
-3. Pre-sagged vs. cold-supply attack comparison
-4. Quiet-to-loud transition response
+**Sag-targeted protocol** (implemented; standard error metrics average over context and do not
+expose sag). Each test drives a purpose-built signal through the model and measures the output RMS
+envelope; for the proposed model the internal V_B+ trajectory is also reported:
+1. Sustained-chord attack/bloom shape (settle-to-attack RMS ratio);
+2. Dynamic recovery time constant (exponential fit to the recovery envelope);
+3. Pre-sagged vs. cold-supply attack (compression ratio of the primed vs. cold attack);
+4. Quiet-to-loud transition ("stiffening") response.
 
-[TBD: full details of test signal design and measurement procedure]
+**Reproducibility.** All runs are seeded; hyperparameters live in versioned configs (with a
+`defaults:` inheritance so experiment configs restate only what differs); the test suite runs in CI;
+and reports are emitted as schema'd JSON plus figures. Each experiment above corresponds to a
+committed config file.
 
 ---
 
 ## 6. Results
 
-*[To be completed after experiments]*
+### 6.1 Preliminary results: synthetic validation
+
+Before any amplifier capture, we validate the approach on synthetic data with known ground truth. A
+reference "amplifier" generates (input, output, V_B+) triples from a known power-supply ODE, an
+envelope-based load coupling, and a sag-dependent nonlinearity whose clipping headroom scales with
+the supply voltage; the model is then fit to the (input, output) pair alone and asked to recover the
+hidden state and its physics. This isolates the central question — *is the latent supply state
+identifiable from output audio?* — from the confounds of real capture.
+
+Two findings, both from short demonstration runs (final large-scale runs pending GPU training):
+
+1. **The gray-box model learns sag and is numerically well-behaved.** After the log-space
+   reparameterisation (§4.4), fitting is stable and drives the error-to-signal ratio to ≈ 5×10⁻³,
+   and the recovered latent V_B+ trajectory correlates ≈ 0.8 with the ground-truth trajectory —
+   the model discovers a supply state that tracks the true load-driven droop, from audio alone.
+
+2. **Individual physical parameters are *not* identifiable from audio alone.** Even at near-zero
+   ESR, the recovered R_eff and C₁ settle far from their true values: the flexible audio path
+   compensates for a mis-set supply, and a free coupling current trades off against R_eff (with C₁
+   trading off to preserve the time constant), so only the *trajectory* and the RC time constant are
+   constrained, not the separate constants. Adding a supervised term on a (simulated) measured V_B+
+   improves the trajectory correlation (≈ 0.8 → ≈ 0.87) but does not by itself resolve the
+   parameter degeneracy.
+
+The practical consequence, adopted in §5.1, is to fix C₁ from the schematic and/or instrument the
+B+ rail, and to report V_B+ as a recovered *trajectory* rather than a set of identified constants.
+We consider the identifiability analysis itself a contribution: it is a concrete, reproducible
+statement about what a gray-box sag model can and cannot recover, obtained before committing to
+hardware. [Figures: parameter-recovery trace and latent-trajectory overlay, generated by
+`scripts/validate_synthetic.py`; Euler-vs-analytic convergence, from the reporting layer.]
+
+### 6.2 Amplifier results
+
+*[To be completed after data collection — standard metrics and the four-part sag protocol of §5.4
+for the proposed model against the three baselines of §5.3, on the held-out test set.]*
 
 ---
 
