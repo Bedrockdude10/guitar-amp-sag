@@ -72,6 +72,12 @@ pip install -e ".[dev]"   # + pytest
 pytest tests/ -v
 ```
 
+`tests/test_<module>.py` cover each component's mathematical invariants in
+isolation; `tests/test_integration.py` wires them together — the stateful data
+loader carrying `V_B+` across segment boundaries through the real model, a full
+train step (dataset → model → loss → backward → optimiser), on-disk WAV loading,
+and the evaluator's signals run end-to-end.
+
 ## Train / evaluate
 
 ```bash
