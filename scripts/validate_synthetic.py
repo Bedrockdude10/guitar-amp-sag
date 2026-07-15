@@ -65,15 +65,16 @@ def main() -> None:
     device = resolve_device(args.device)
     configure_backends(device)
 
-    # --- Ground truth: known physics + coupling + sag nonlinearity ---------
-    true_R_eff, true_C1 = 300.0, 22e-6
-    amp = SyntheticSagAmp(fs=48000.0, R_eff=true_R_eff, C1=true_C1)
+    cfg = load_config()
+
+    # --- Ground truth: known physics (from config) + coupling + sag nonlin. --
+    true_R_eff, true_C1 = float(cfg["R_eff"]), float(cfg["C1"])
+    amp = SyntheticSagAmp(fs=float(cfg["fs"]), R_eff=true_R_eff, C1=true_C1)
     x = amp.generate_excitation(args.duration, seed=args.seed).to(device)
     _, y, V_true = amp.generate(x)
     y, V_true = y.to(device), V_true.to(device)
 
     # --- Model: deliberately wrong initial physics, then learn -------------
-    cfg = load_config()
     cfg.update(R_eff=150.0, C1=47e-6, hidden_size=32, coupling_hidden=16,
                learn_R_eff=True, learn_C1=True, learn_V_oc=False)
     model = PowerSagModel.from_config(cfg).to(device)
@@ -89,7 +90,6 @@ def main() -> None:
 
     beta = args.supervise_vb
     delta_V = float(cfg["delta_V"])
-    V_idle = float(cfg["V_idle"])
     mode = f"supervised V_B+ (beta={beta})" if beta > 0 else "latent (audio only)"
     print("== Synthetic identifiability study ==")
     print(f"mode         : {mode}")
@@ -111,9 +111,9 @@ def main() -> None:
             loss = esr(pred, ts) + cfg["preemph_weight"] * preemph(pred, ts)
             if beta > 0:  # B+ probe: supervise the (normalised) supply state
                 vt = V_true[:, s * seg : (s + 1) * seg]
-                loss = loss + beta * (
-                    ((V_seq - V_idle) / delta_V - (vt - V_idle) / delta_V) ** 2
-                ).mean()
+                # The shared -V_idle/delta_V offset cancels, so the normalised
+                # error is just (V_seq - vt) / delta_V.
+                loss = loss + beta * (((V_seq - vt) / delta_V) ** 2).mean()
             loss.backward()
             opt.step()
             V0 = V_next.detach()

@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .. import constants as const
 from ..utils import normalize_supply
 
 
@@ -27,7 +28,9 @@ class CouplingNetwork(nn.Module):
         feeding it to the network, matching the FiLM conditioning convention.
     """
 
-    def __init__(self, hidden: int = 16, V_idle: float = 415.0, delta_V: float = 40.0) -> None:
+    def __init__(
+        self, hidden: int = 16, V_idle: float = const.V_IDLE, delta_V: float = const.DELTA_V
+    ) -> None:
         super().__init__()
         self.V_idle = float(V_idle)
         self.delta_V = float(delta_V)

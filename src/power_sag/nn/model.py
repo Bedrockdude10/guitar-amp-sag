@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
+from .. import constants as const
 from ..physics import PowerSupplyODE
 from .audio_model import LSTMState, PowerSagLSTM
 from .coupling import CouplingNetwork
@@ -76,9 +77,9 @@ class PowerSagModel(nn.Module):
             V_oc=float(config["V_oc"]),
             V_idle=float(config["V_idle"]),
             reff_mode=config.get("reff_mode", "scalar"),
-            R0=float(config.get("R0", 250.0)),
-            R1=float(config.get("R1", 100.0)),
-            k=float(config.get("k", 1.0)),
+            R0=float(config.get("R0", const.R0)),
+            R1=float(config.get("R1", const.R1)),
+            k=float(config.get("k", const.K)),
             learn_R_eff=config.get("learn_R_eff", True),
             learn_C1=config.get("learn_C1", True),
             learn_V_oc=config.get("learn_V_oc", False),

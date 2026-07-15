@@ -27,7 +27,12 @@ from typing import Dict, Union
 import numpy as np
 import torch
 
+from .. import constants as const
+
 Tensorish = Union[torch.Tensor, np.ndarray]
+
+_EPS = const.EPS  # divide-by-zero guard shared by every metric below
+_DB_FACTOR = 10.0  # 10 * log10(...) for power-ratio decibels
 
 
 def _flat(x: Tensorish) -> torch.Tensor:
@@ -37,7 +42,7 @@ def _flat(x: Tensorish) -> torch.Tensor:
 
 
 # --------------------------------------------------------------- regression
-def esr(prediction: Tensorish, target: Tensorish, eps: float = 1e-12) -> float:
+def esr(prediction: Tensorish, target: Tensorish, eps: float = _EPS) -> float:
     """Error-to-signal ratio ``sum((p-t)^2)/sum(t^2)`` in ``[0, inf)``."""
     p, t = _flat(prediction), _flat(target)
     return float(torch.sum((p - t) ** 2) / (torch.sum(t ** 2) + eps))
@@ -58,20 +63,20 @@ def rmse(prediction: Tensorish, target: Tensorish) -> float:
 def esr_db(prediction: Tensorish, target: Tensorish) -> float:
     """ESR in decibels, ``10*log10(esr)`` (``-inf`` for a perfect fit)."""
     value = esr(prediction, target)
-    return float(10.0 * np.log10(value)) if value > 0 else float("-inf")
+    return float(_DB_FACTOR * np.log10(value)) if value > 0 else float("-inf")
 
 
-def segmental_snr_db(prediction: Tensorish, target: Tensorish, eps: float = 1e-12) -> float:
+def segmental_snr_db(prediction: Tensorish, target: Tensorish, eps: float = _EPS) -> float:
     """Signal-to-noise ratio in dB (``+inf`` for a perfect fit)."""
     p, t = _flat(prediction), _flat(target)
     noise = torch.sum((p - t) ** 2)
     signal = torch.sum(t ** 2)
     if noise <= eps:
         return float("inf")
-    return float(10.0 * torch.log10(signal / (noise + eps)))
+    return float(_DB_FACTOR * torch.log10(signal / (noise + eps)))
 
 
-def correlation(a: Tensorish, b: Tensorish, eps: float = 1e-12) -> float:
+def correlation(a: Tensorish, b: Tensorish, eps: float = _EPS) -> float:
     """Pearson correlation in ``[-1, 1]``."""
     x, y = _flat(a), _flat(b)
     x = x - x.mean()
@@ -80,19 +85,37 @@ def correlation(a: Tensorish, b: Tensorish, eps: float = 1e-12) -> float:
     return float(torch.clamp((x @ y) / denom, -1.0, 1.0))
 
 
-def relative_error(estimate: float, truth: float, eps: float = 1e-12) -> float:
+def relative_error(estimate: float, truth: float, eps: float = _EPS) -> float:
     """Relative error ``|estimate - truth| / |truth|`` in ``[0, inf)``."""
     return float(abs(estimate - truth) / (abs(truth) + eps))
 
 
 def regression_metrics(prediction: Tensorish, target: Tensorish) -> Dict[str, float]:
-    """Standard audio regression metrics as a dict."""
+    """Standard audio regression metrics as a dict.
+
+    Computes the shared ``sum((p-t)^2)`` (noise) and ``sum(t^2)`` (signal)
+    reductions once and derives ESR/ESR-dB/SNR from them, rather than calling
+    ``esr``/``esr_db``/``segmental_snr_db`` separately (which flattened the
+    tensors and ran the same reductions three times over).
+    """
+    p, t = _flat(prediction), _flat(target)
+    diff = p - t
+    noise = torch.sum(diff ** 2)
+    signal = torch.sum(t ** 2)
+
+    esr_val = float(noise / (signal + _EPS))
+    esr_db_val = float(_DB_FACTOR * np.log10(esr_val)) if esr_val > 0 else float("-inf")
+    snr_val = (
+        float("inf")
+        if noise <= _EPS
+        else float(_DB_FACTOR * torch.log10(signal / (noise + _EPS)))
+    )
     return {
-        "esr": esr(prediction, target),
-        "esr_db": esr_db(prediction, target),
-        "mae": mae(prediction, target),
-        "rmse": rmse(prediction, target),
-        "snr_db": segmental_snr_db(prediction, target),
+        "esr": esr_val,
+        "esr_db": esr_db_val,
+        "mae": float(torch.mean(torch.abs(diff))),
+        "rmse": float(torch.sqrt(torch.mean(diff ** 2))),
+        "snr_db": snr_val,
     }
 
 

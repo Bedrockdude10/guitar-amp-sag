@@ -24,13 +24,24 @@ OKABE_ITO: List[str] = [
     "#000000",  # black
 ]
 
-# Semantic roles used consistently across figures.
+# Semantic roles used consistently across figures.  Defined by palette *index*
+# so they cannot drift from ``OKABE_ITO`` if the palette is ever edited.
 ROLE_COLORS: Dict[str, str] = {
-    "target": "#000000",     # ground truth / measured amp
-    "prediction": "#0072B2",  # our model
-    "reference": "#D55E00",   # a second reference (e.g. true V_B+, a baseline)
-    "fit": "#009E73",         # a fitted curve
+    "target": OKABE_ITO[7],      # black -- ground truth / measured amp
+    "prediction": OKABE_ITO[0],  # blue -- our model
+    "reference": OKABE_ITO[1],   # vermillion -- a second reference (true V_B+, baseline)
+    "fit": OKABE_ITO[2],         # bluish green -- a fitted curve
 }
+
+# Maximum points drawn per line: long audio signals are stride-decimated to this
+# many samples so figures stay light without changing their shape.
+MAX_PLOT_POINTS: int = 20000
+
+# Named figure sizes (inches) shared across the plotting functions.
+FIGSIZE_WIDE = (8, 3)          # single wide panel
+FIGSIZE_WIDE_STACKED = (8, 4.5)  # two stacked wide panels
+FIGSIZE_SMALL = (6, 3.2)       # single compact panel
+FIGSIZE_SMALL_STACKED = (6, 4.5)  # two stacked compact panels
 
 
 def color_for_index(i: int) -> str:

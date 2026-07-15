@@ -25,15 +25,6 @@ from power_sag.nn import PowerSagModel  # noqa: E402
 from power_sag.utils import resolve_device  # noqa: E402
 
 
-def rms_envelope(signal: torch.Tensor, win: int) -> torch.Tensor:
-    """Sliding-window RMS envelope of a ``(1, T, 1)`` signal."""
-    x = signal.reshape(-1)
-    power = x ** 2
-    kernel = torch.ones(1, 1, win) / win
-    padded = torch.nn.functional.pad(power.view(1, 1, -1), (win - 1, 0))
-    return torch.sqrt(torch.nn.functional.conv1d(padded, kernel).reshape(-1) + 1e-12)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate sag behaviour.")
     parser.add_argument("--checkpoint", required=True)
@@ -71,7 +62,7 @@ def main() -> None:
     # 3. Attack/bloom shape of the output.
     with torch.no_grad():
         y = model(chord)
-    env = rms_envelope(y, win=int(0.01 * fs))
+    env = ev.rms_envelope(y)  # 10 ms window (matches the removed local helper)
     print(f"output attack peak envelope: {env.max():.4f}")
 
 
