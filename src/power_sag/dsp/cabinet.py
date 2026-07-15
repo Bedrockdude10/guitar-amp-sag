@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .. import constants as const
 from ..utils import load_audio
 
 
@@ -40,10 +41,14 @@ class CabinetIR(nn.Module):
         taps = self._load(ir)
         if normalize:
             total = taps.sum()
-            if total.abs() > 1e-12:
+            if total.abs() > const.EPS:
                 taps = taps / total
         # Register as a buffer so it is fixed and never trained (no gradients).
         self.register_buffer("ir", taps)
+        # A true linear convolution is cross-correlation with the flipped kernel;
+        # precompute it once (also a fixed buffer) instead of flipping/reshaping
+        # on every forward call.
+        self.register_buffer("_kernel", taps.flip(0).view(1, 1, -1))
 
     @staticmethod
     def _load(ir: Union[str, Path, np.ndarray, torch.Tensor]) -> torch.Tensor:
@@ -73,10 +78,10 @@ class CabinetIR(nn.Module):
             signal = x
 
         length = signal.size(-1)
-        taps = self.ir
-        # True linear convolution = cross-correlation with the flipped kernel.
-        kernel = taps.flip(0).view(1, 1, -1).to(signal.dtype)
-        padded = F.pad(signal.unsqueeze(1), (taps.numel() - 1, 0))
+        kernel = self._kernel
+        if kernel.dtype != signal.dtype:
+            kernel = kernel.to(signal.dtype)
+        padded = F.pad(signal.unsqueeze(1), (self.ir.numel() - 1, 0))
         conv = F.conv1d(padded, kernel)
         conv = conv[..., :length].squeeze(1)  # (batch, seq_len)
 

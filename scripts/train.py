@@ -186,9 +186,13 @@ def main() -> None:
         )
         running, n_batches = 0.0, 0
         for batch_idx in sampler:
-            inp = torch.stack([train_ds[i][0] for i in batch_idx]).to(device)
-            tgt = torch.stack([train_ds[i][1] for i in batch_idx]).to(device)
-            V0 = torch.stack([train_ds[i][2] for i in batch_idx]).view(-1, 1).to(device)
+            # Index each segment once (slicing + normalise runs in __getitem__),
+            # then stack the three fields, instead of indexing the dataset three
+            # separate times per batch element.
+            items = [train_ds[i] for i in batch_idx]
+            inp = torch.stack([it[0] for it in items]).to(device)
+            tgt = torch.stack([it[1] for it in items]).to(device)
+            V0 = torch.stack([it[2] for it in items]).view(-1, 1).to(device)
             loss, V_final = train_segment(
                 model, optimizer, inp, tgt, V0, tbptt, esr, preemph, lam
             )

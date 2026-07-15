@@ -13,6 +13,8 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 
+from . import constants as const
+
 AudioSource = Union[str, Path, np.ndarray, torch.Tensor]
 
 
@@ -108,7 +110,7 @@ def load_audio(source: AudioSource) -> torch.Tensor:
     return to_mono_tensor(data)
 
 
-def normalize_audio(x: torch.Tensor, eps: float = 1e-12) -> torch.Tensor:
+def normalize_audio(x: torch.Tensor, eps: float = const.EPS) -> torch.Tensor:
     """Peak-normalise a signal into ``[-1, 1]`` (divide by max abs value)."""
     peak = x.abs().max()
     if peak < eps:

@@ -19,7 +19,16 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 import torch
 
-from .style import ROLE_COLORS, apply_style, color_for_index
+from .style import (
+    FIGSIZE_SMALL,
+    FIGSIZE_SMALL_STACKED,
+    FIGSIZE_WIDE,
+    FIGSIZE_WIDE_STACKED,
+    MAX_PLOT_POINTS,
+    ROLE_COLORS,
+    apply_style,
+    color_for_index,
+)
 
 
 def _np(x) -> np.ndarray:
@@ -28,16 +37,13 @@ def _np(x) -> np.ndarray:
     return np.asarray(x).reshape(-1)
 
 
-def _downsample(y: np.ndarray, max_points: int = 20000) -> np.ndarray:
-    """Stride-decimate a long signal so figures stay light (plot-only)."""
-    if len(y) <= max_points:
-        return y
-    step = int(np.ceil(len(y) / max_points))
-    return y[::step]
+def _stride(n: int) -> int:
+    """Decimation stride that keeps a length-``n`` signal under MAX_PLOT_POINTS."""
+    return max(int(np.ceil(n / MAX_PLOT_POINTS)), 1)
 
 
 def _time_axis(n: int, fs: float, step: int) -> np.ndarray:
-    return np.arange(0, n, step)[: (n + step - 1) // step] / fs
+    return np.arange(0, n, step) / fs
 
 
 def plot_signal_comparison(prediction, target, fs: float, title: str = "Output"):
@@ -46,10 +52,10 @@ def plot_signal_comparison(prediction, target, fs: float, title: str = "Output")
 
     apply_style()
     p, t = _np(prediction), _np(target)
-    step = max(int(np.ceil(max(len(p), len(t)) / 20000)), 1)
+    step = _stride(max(len(p), len(t)))
     tp = np.arange(0, len(p), step) / fs
     tt = np.arange(0, len(t), step) / fs
-    fig, ax = plt.subplots(figsize=(8, 3))
+    fig, ax = plt.subplots(figsize=FIGSIZE_WIDE)
     ax.plot(tt, t[::step], color=ROLE_COLORS["target"], label="target", alpha=0.9)
     ax.plot(tp, p[::step], color=ROLE_COLORS["prediction"], label="prediction", alpha=0.9)
     ax.set_xlabel("time (s)")
@@ -69,11 +75,10 @@ def plot_output_and_supply(output, voltage, fs: float, v_reference=None):
 
     apply_style()
     y, v = _np(output), _np(voltage)
-    ys, vs = _downsample(y), _downsample(voltage if isinstance(voltage, np.ndarray) else v)
-    step_y = max(int(np.ceil(len(y) / 20000)), 1)
-    step_v = max(int(np.ceil(len(v) / 20000)), 1)
+    step_y = _stride(len(y))
+    step_v = _stride(len(v))
 
-    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(8, 4.5), sharex=True)
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=FIGSIZE_WIDE_STACKED, sharex=True)
     ax0.plot(_time_axis(len(y), fs, step_y), y[::step_y],
              color=ROLE_COLORS["prediction"], label="output")
     ax0.set_ylabel("amplitude")
@@ -83,7 +88,7 @@ def plot_output_and_supply(output, voltage, fs: float, v_reference=None):
              color=ROLE_COLORS["prediction"], label="V_B+ (model)")
     if v_reference is not None:
         vr = _np(v_reference)
-        step_r = max(int(np.ceil(len(vr) / 20000)), 1)
+        step_r = _stride(len(vr))
         ax1.plot(_time_axis(len(vr), fs, step_r), vr[::step_r],
                  color=ROLE_COLORS["reference"], label="V_B+ (reference)")
         ax1.legend(loc="upper right")
@@ -109,7 +114,7 @@ def plot_recovery_fit(envelope, fs: float):
     params, _ = curve_fit(model, t, y, p0=p0, maxfev=20000)
     tau = abs(params[1])
 
-    fig, ax = plt.subplots(figsize=(6, 3.2))
+    fig, ax = plt.subplots(figsize=FIGSIZE_SMALL)
     ax.plot(t, y, color=ROLE_COLORS["target"], label="envelope", alpha=0.8)
     ax.plot(t, model(t, *params), color=ROLE_COLORS["fit"], linestyle="--",
             label=f"fit (τ = {tau * 1e3:.1f} ms)")
@@ -125,7 +130,7 @@ def plot_training_curves(epochs: Sequence[int], train: Sequence[float], val: Seq
     import matplotlib.pyplot as plt
 
     apply_style()
-    fig, ax = plt.subplots(figsize=(6, 3.2))
+    fig, ax = plt.subplots(figsize=FIGSIZE_SMALL)
     ax.plot(epochs, train, color=ROLE_COLORS["prediction"], label="train")
     ax.plot(epochs, val, color=ROLE_COLORS["reference"], label="val")
     ax.set_yscale("log")
@@ -164,7 +169,7 @@ def plot_parameter_recovery(
     import matplotlib.pyplot as plt
 
     apply_style()
-    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(6, 4.5), sharex=True)
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=FIGSIZE_SMALL_STACKED, sharex=True)
     ax0.plot(steps, r_eff, color=ROLE_COLORS["prediction"], label="estimate")
     ax0.axhline(true_r_eff, color=ROLE_COLORS["target"], linestyle="--", label="truth")
     ax0.set_ylabel("R_eff (Ω)")

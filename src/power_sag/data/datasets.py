@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, Sampler
 
+from .. import constants as const
 from ..utils import load_audio, normalize_audio, to_mono_tensor
 
 ArrayLike = Union[np.ndarray, torch.Tensor]
@@ -129,8 +130,8 @@ class SequenceDataset(Dataset):
         self,
         input_audio: Optional[ArrayLike] = None,
         target_audio: Optional[ArrayLike] = None,
-        segment_len: int = 24000,
-        V_idle: float = 415.0,
+        segment_len: int = const.SEGMENT_LEN,
+        V_idle: float = const.V_IDLE,
         normalize: bool = True,
         drop_last: bool = True,
         recordings: Optional[Sequence[Recording]] = None,
@@ -263,15 +264,25 @@ class SequenceBatchSampler(Sampler):
         self.batch_size = int(batch_size)
         self.shuffle = bool(shuffle)
         self._rng = random.Random(seed)
+        self._lanes: Optional[List[List[int]]] = None
 
     def _build_lanes(self) -> List[List[int]]:
-        sequences = [list(seq) for seq in self.dataset.sequences if seq]
-        if self.shuffle:
-            self._rng.shuffle(sequences)
-        lanes: List[List[int]] = [[] for _ in range(self.batch_size)]
-        for i, seq in enumerate(sequences):
-            lanes[i % self.batch_size].extend(seq)
-        return lanes
+        # Build the lane assignment exactly once per sampler and cache it.  A
+        # fresh sampler is created each epoch (with a per-epoch seed), so caching
+        # gives the intended one-shuffle-per-epoch behaviour while ensuring
+        # ``__len__`` and ``__iter__`` see the *same* assignment.  Previously
+        # both rebuilt independently and each consumed ``self._rng``, so a
+        # ``len(sampler)`` call (e.g. by DataLoader) reshuffled the lanes and
+        # desynced the reported length from the batches actually yielded.
+        if self._lanes is None:
+            sequences = [list(seq) for seq in self.dataset.sequences if seq]
+            if self.shuffle:
+                self._rng.shuffle(sequences)
+            lanes: List[List[int]] = [[] for _ in range(self.batch_size)]
+            for i, seq in enumerate(sequences):
+                lanes[i % self.batch_size].extend(seq)
+            self._lanes = lanes
+        return self._lanes
 
     def __iter__(self) -> Iterator[List[int]]:
         lanes = self._build_lanes()

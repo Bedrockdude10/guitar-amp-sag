@@ -36,7 +36,6 @@ class FiLMLayer(nn.Module):
         self.to_gamma = nn.Linear(cond_dim, feature_dim)
         self.to_beta = nn.Linear(cond_dim, feature_dim)
         # Start as the identity modulation: gamma == 1, beta == 0.
-        nn.init.zeros_(self.to_gamma.bias)  # gamma bias set to 1 below
         with torch.no_grad():
             self.to_gamma.bias.fill_(1.0)
         nn.init.zeros_(self.to_beta.bias)

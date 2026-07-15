@@ -15,8 +15,13 @@ import torch
 import torch.nn.functional as F
 from scipy.optimize import curve_fit
 
+from .. import constants as const
+
 # A model under test: maps input (1, T, 1) to output (1, T, 1).
 ModelFn = Callable[[torch.Tensor], torch.Tensor]
+
+# Guard against divide-by-zero in the settle/attack style ratios below.
+_RATIO_EPS = 1e-9
 
 
 def _decay_model(t: np.ndarray, A: float, tau: float, C: float) -> np.ndarray:
@@ -33,8 +38,11 @@ class SagEvaluator:
         Sample rate in Hz used for all generated signals and time axes.
     """
 
-    def __init__(self, fs: float = 48000.0) -> None:
+    def __init__(self, fs: float = const.SAMPLE_RATE) -> None:
         self.fs = float(fs)
+        # Cache averaging kernels by (window, dtype); ``rms_envelope`` is called
+        # several times per protocol run and the kernel only depends on ``win``.
+        self._rms_kernels: Dict[Tuple[int, torch.dtype], torch.Tensor] = {}
 
     # -------------------------------------------------------------- signals
     def sustained_chord_signal(
@@ -120,9 +128,13 @@ class SagEvaluator:
         win = max(int(win_ms * 1e-3 * self.fs), 1)
         x = signal.detach().reshape(1, 1, -1)
         power = x ** 2
-        kernel = torch.ones(1, 1, win, dtype=power.dtype) / win
+        key = (win, power.dtype)
+        kernel = self._rms_kernels.get(key)
+        if kernel is None:
+            kernel = torch.ones(1, 1, win, dtype=power.dtype) / win
+            self._rms_kernels[key] = kernel
         padded = F.pad(power, (win - 1, 0))
-        return torch.sqrt(F.conv1d(padded, kernel).reshape(-1) + 1e-12)
+        return torch.sqrt(F.conv1d(padded, kernel).reshape(-1) + const.EPS)
 
     @staticmethod
     def _run(model: ModelFn, x: torch.Tensor) -> torch.Tensor:
@@ -144,7 +156,7 @@ class SagEvaluator:
         attack = float(env[: env.numel() // 10].max())
         settle = float(env[-env.numel() // 10 :].mean())
         return {"attack_rms": attack, "settle_rms": settle,
-                "settle_over_attack": settle / (attack + 1e-9)}
+                "settle_over_attack": settle / (attack + _RATIO_EPS)}
 
     def recovery_time_constant(
         self, model: ModelFn, loud: float = 0.5, quiet: float = 1.0
@@ -181,7 +193,7 @@ class SagEvaluator:
         cold_peak = float(cold_env.max())
         presag_peak = float(primed_env.max())
         return {"cold_attack": cold_peak, "presag_attack": presag_peak,
-                "presag_over_cold": presag_peak / (cold_peak + 1e-9)}
+                "presag_over_cold": presag_peak / (cold_peak + _RATIO_EPS)}
 
     def quiet_to_loud_response(
         self, model: ModelFn, quiet: float = 0.5, loud: float = 0.5
@@ -196,7 +208,7 @@ class SagEvaluator:
         peak = float(loud_env.max())
         settle = float(loud_env[-loud_env.numel() // 5 :].mean())
         return {"loud_peak": peak, "loud_settle": settle,
-                "settle_over_peak": settle / (peak + 1e-9)}
+                "settle_over_peak": settle / (peak + _RATIO_EPS)}
 
     def run_protocol(self, model: ModelFn) -> Dict[str, Dict[str, float]]:
         """Run the full 4-part sag protocol; return all measurements."""

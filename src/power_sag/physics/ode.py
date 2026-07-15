@@ -21,6 +21,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .. import constants as const
+
 
 def euler_step(
     V: torch.Tensor,
@@ -45,7 +47,9 @@ def euler_step(
     gradients are unaffected in practice.
     """
     dV = (Ts / C1) * ((V_oc - V) / R_eff - I_load)
-    V_next = torch.minimum(V + dV, V_oc * torch.ones_like(V))
+    # ``V_oc`` is a scalar tensor and broadcasts against ``V``; no need to
+    # materialise ``ones_like(V)`` on every Euler step.
+    V_next = torch.minimum(V + dV, V_oc)
     return torch.clamp(V_next, min=0.0)
 
 
@@ -86,15 +90,15 @@ class PowerSupplyODE(nn.Module):
 
     def __init__(
         self,
-        fs: float = 48000.0,
-        C1: float = 22e-6,
-        R_eff: float = 300.0,
-        V_oc: float = 420.0,
-        V_idle: float = 415.0,
+        fs: float = const.SAMPLE_RATE,
+        C1: float = const.C1,
+        R_eff: float = const.R_EFF,
+        V_oc: float = const.V_OC,
+        V_idle: float = const.V_IDLE,
         reff_mode: str = "scalar",
-        R0: float = 250.0,
-        R1: float = 100.0,
-        k: float = 1.0,
+        R0: float = const.R0,
+        R1: float = const.R1,
+        k: float = const.K,
         learn_R_eff: bool = True,
         learn_C1: bool = True,
         learn_V_oc: bool = False,
@@ -217,9 +221,21 @@ class PowerSupplyODE(nn.Module):
         batch, seq_len, _ = I_load.shape
         V = self.init_state(batch, I_load.device, I_load.dtype) if V0 is None else V0
 
+        # Hoist the log-space parameter decodes (each an ``exp``) out of the hot
+        # loop: ``C1``/``R_eff``/``V_oc`` are constant across the unroll, so
+        # recomputing them per sample was pure waste.  In scalar mode ``R_eff``
+        # is fixed; only the nonlinear model needs a per-sample ``r_eff(I)``.
+        C1, V_oc, Ts = self.C1, self.V_oc, self.Ts
         states = []
-        for n in range(seq_len):
-            states.append(V)
-            V = self.step(V, I_load[:, n, :])
+        if self.reff_mode == "scalar":
+            R_eff = self._R_eff
+            for n in range(seq_len):
+                states.append(V)
+                V = euler_step(V, I_load[:, n, :], Ts, C1, V_oc, R_eff)
+        else:
+            for n in range(seq_len):
+                states.append(V)
+                I_n = I_load[:, n, :]
+                V = euler_step(V, I_n, Ts, C1, V_oc, self.r_eff(I_n))
         V_seq = torch.stack(states, dim=1)
         return V_seq, V

@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from .. import constants as const
 from ..utils import normalize_supply
 from .film import FiLMLayer
 
@@ -40,8 +41,8 @@ class PowerSagLSTM(nn.Module):
         hidden_size: int = 32,
         num_layers: int = 1,
         input_size: int = 1,
-        V_idle: float = 415.0,
-        delta_V: float = 40.0,
+        V_idle: float = const.V_IDLE,
+        delta_V: float = const.DELTA_V,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size

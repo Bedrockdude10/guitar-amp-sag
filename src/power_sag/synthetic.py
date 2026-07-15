@@ -26,6 +26,7 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
+from . import constants as const
 from .physics.ode import PowerSupplyODE
 
 
@@ -50,11 +51,11 @@ class SyntheticSagAmp:
 
     def __init__(
         self,
-        fs: float = 48000.0,
-        V_oc: float = 420.0,
-        V_idle: float = 415.0,
-        C1: float = 22e-6,
-        R_eff: float = 300.0,
+        fs: float = const.SAMPLE_RATE,
+        V_oc: float = const.V_OC,
+        V_idle: float = const.V_IDLE,
+        C1: float = const.C1,
+        R_eff: float = const.R_EFF,
         I0: float = 0.02,
         alpha: float = 0.35,
         gain: float = 4.0,

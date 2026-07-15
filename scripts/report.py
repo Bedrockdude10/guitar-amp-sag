@@ -84,7 +84,6 @@ def main() -> None:
         plots.plot_output_and_supply(y_pred, v_pred, fs=fs, v_reference=v_true),
         str(outdir / "supply.png"))
 
-    ev_env = None
     from power_sag.evaluation import SagEvaluator
 
     ev = SagEvaluator(fs=fs)
